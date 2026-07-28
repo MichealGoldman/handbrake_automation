@@ -28,21 +28,32 @@ never runs `git push`.
   exit non-zero. This is the single command run before every commit; a
   non-zero exit means fix and rerun until clean.
 
-### Shared config (`pyproject.toml`)
+### Shared config
 
+`black`, `isort`, `pylint`, and `mypy` all support `pyproject.toml` natively.
+`pycodestyle` and `pydocstyle` predate that convention and only read
+ini-style config (`setup.cfg`/`tox.ini`), so their settings live in a
+separate `setup.cfg` instead.
+
+`pyproject.toml`:
 - `[tool.black]`: default line length (88).
 - `[tool.isort]`: `profile = "black"` so import formatting never fights
   black's formatting.
-- `[tool.pylint]` / pycodestyle: `max-line-length = 88` to match black.
-  Disable `missing-module-docstring`, `missing-class-docstring`,
-  `missing-function-docstring` in pylint — docstring presence/content is
-  pydocstyle's job; enforcing it in both risks conflicting messages for the
-  same missing docstring.
-- `[tool.pydocstyle]`: `convention = "google"` — all docstrings in this repo
+- `[tool.pylint]`: `max-line-length = 88` to match black. Disable
+  `missing-module-docstring`, `missing-class-docstring`,
+  `missing-function-docstring` — docstring presence/content is pydocstyle's
+  job; enforcing it in both risks conflicting messages for the same missing
+  docstring. Also disable `too-few-public-methods` — this codebase's plain
+  dataclasses and single-purpose exception classes are an intentional
+  pattern, not a design smell.
+- `[tool.mypy]`: `check_untyped_defs = true`, `warn_unused_ignores = true`,
+  `ignore_missing_imports = true` — standard, not strict; no third-party
+  stub packages (e.g. `types-requests`) added.
+
+`setup.cfg`:
+- `[pycodestyle]`: `max-line-length = 88` to match black.
+- `[pydocstyle]`: `convention = google` — all docstrings in this repo
   follow Google style (`Args:`, `Returns:`, `Raises:` sections).
-- `[tool.mypy]`: standard strict-ish defaults for a small script project
-  (check untyped defs, warn on unused ignores); no third-party stub
-  requirements expected beyond what's already typed inline.
 
 ### Consequence for existing code
 
