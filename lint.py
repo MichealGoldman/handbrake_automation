@@ -1,5 +1,7 @@
-"""Runs isort and black (auto-fix), then pycodestyle, pydocstyle, pylint,
-and mypy (check-only) across the project's Python files.
+"""Auto-fixes and checks every top-level .py file in the project.
+
+Runs isort and black (auto-fix), then pycodestyle, pydocstyle, pylint, and
+mypy (check-only) across the project's Python files.
 
 Usage:
     python lint.py               # lint every top-level .py file

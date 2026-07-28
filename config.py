@@ -13,7 +13,7 @@ load_dotenv()
 
 
 class ConfigError(RuntimeError):
-    pass
+    """Raised when required configuration is missing or invalid."""
 
 
 def _require(name: str) -> str:
@@ -39,12 +39,24 @@ def _resolve_handbrake_cli(configured_path: str) -> str:
 
     raise ConfigError(
         "HandBrakeCLI.exe not found on PATH and HANDBRAKE_CLI_PATH is not set in .env. "
-        "Install HandBrakeCLI from https://handbrake.fr/downloads2.php and set its path."
+        "Install HandBrakeCLI from https://handbrake.fr/downloads2.php and set its "
+        "path."
     )
 
 
 @dataclass(frozen=True)
 class Config:
+    """Fully resolved application configuration loaded from the environment.
+
+    Attributes:
+        source_dir: Root folder to recursively scan for .mkv files.
+        dest_dir: Root of the Plex/Jellyfin-style output tree.
+        handbrake_cli_path: Resolved path to the HandBrakeCLI executable.
+        handbrake_preset: Exact HandBrake preset name to convert with.
+        tmdb_api_key: API key used for movie lookups.
+        tvdb_api_key: API key used for TV episode lookups.
+    """
+
     source_dir: Path
     dest_dir: Path
     handbrake_cli_path: str
@@ -54,6 +66,15 @@ class Config:
 
 
 def load_config() -> Config:
+    """Load and validate configuration from the environment.
+
+    Returns:
+        A fully resolved Config.
+
+    Raises:
+        ConfigError: If a required variable is missing, SOURCE_DIR does not
+            exist, or HandBrakeCLI cannot be located.
+    """
     source_dir = Path(_require("SOURCE_DIR"))
     dest_dir = Path(_require("DEST_DIR"))
 

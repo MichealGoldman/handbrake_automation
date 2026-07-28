@@ -1,5 +1,8 @@
-"""Recursively finds .mkv files, identifies them via TMDb/TVDB, and converts
-them to .mp4 with HandBrakeCLI into a Plex/Jellyfin-style folder structure.
+"""Recursively finds, identifies, and converts .mkv files to Plex/Jellyfin .mp4s.
+
+Scans SOURCE_DIR for .mkv files, identifies each one via TMDb/TVDB, and
+converts it with HandBrakeCLI into DEST_DIR's Plex/Jellyfin-style folder
+structure.
 
 Usage:
     python main.py
@@ -52,10 +55,12 @@ def _identify(path: Path, tvdb_client: TVDBClient, config: Config) -> MediaMatch
 
     if parsed.media_type == "movie":
         match = tmdb.search_movie(parsed.title, parsed.year, config.tmdb_api_key)
-    else:
+    elif parsed.season is not None and parsed.episode is not None:
         match = search_episode(
             tvdb_client, parsed.title, parsed.year, parsed.season, parsed.episode
         )
+    else:
+        match = None
 
     if match is not None:
         return match
@@ -75,6 +80,12 @@ def _identify(path: Path, tvdb_client: TVDBClient, config: Config) -> MediaMatch
 
 
 def main() -> int:
+    """Run the full scan -> identify -> convert pipeline.
+
+    Returns:
+        0 if every file converted without failure, 2 if any file failed,
+        1 if configuration could not be loaded.
+    """
     log_path = _setup_logging()
 
     try:
@@ -103,7 +114,8 @@ def main() -> int:
 
         try:
             match = _identify(source_path, tvdb_client, config)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
+            # One bad file must not abort the whole run.
             logging.exception("Identification failed for %s", source_path)
             failed += 1
             continue
@@ -139,7 +151,8 @@ def main() -> int:
         converted += 1
 
     logging.info(
-        "Done. Converted: %d, skipped (already existed): %d, failed: %d, flagged for review: %d",
+        "Done. Converted: %d, skipped (already existed): %d, failed: %d, "
+        "flagged for review: %d",
         converted,
         skipped_existing,
         failed,

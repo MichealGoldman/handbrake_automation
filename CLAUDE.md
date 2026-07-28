@@ -14,9 +14,18 @@ cp .env.example .env              # then fill in the values below
 python main.py                    # run the full scan -> identify -> convert pipeline
 ```
 
-There is no test suite, linter, or build step configured in this repo yet.
+There is no test suite or build step configured in this repo yet.
 
 Required `.env` values (see `.env.example`): `SOURCE_DIR`, `DEST_DIR`, `HANDBRAKE_CLI_PATH` (blank = search PATH), `HANDBRAKE_PRESET` (must exactly match a name from `HandBrakeCLI --preset-list`), `TMDB_API_KEY`, `TVDB_API_KEY`.
+
+## Dev tooling
+
+```
+pip install -r requirements-dev.txt   # pylint, pydocstyle, pycodestyle, black, isort, mypy
+python lint.py                        # auto-fixes (isort, black), then checks (pycodestyle, pydocstyle, pylint, mypy)
+```
+
+Every `.py` file must pass `python lint.py` cleanly before any commit — this is manual discipline (there's no git hook or CI wired up), not an automated gate. Docstrings are Google-style and required on every public module, class, and function (`pydocstyle`-enforced); private (`_`-prefixed) helpers don't need one. This project's assistant never runs `git push` — only the user pushes.
 
 ## Architecture
 

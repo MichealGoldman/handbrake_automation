@@ -7,6 +7,9 @@ profile = "black"
 [tool.pylint.format]
 max-line-length = 88
 
+[tool.pylint.design]
+max-attributes = 8
+
 [tool.pylint."messages control"]
 disable = [
     "missing-module-docstring",

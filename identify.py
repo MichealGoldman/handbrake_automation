@@ -11,7 +11,17 @@ from guessit import guessit
 
 @dataclass(frozen=True)
 class ParsedName:
-    media_type: str  # "movie" or "episode"
+    """Structured hints guessit extracted from a source filename.
+
+    Attributes:
+        media_type: Either "movie" or "episode".
+        title: Best-guess movie or series title.
+        year: Release year (movies) or first-air year (episodes), if found.
+        season: Season number, for episodes.
+        episode: Episode number, for episodes.
+    """
+
+    media_type: str
     title: str
     year: Optional[int]
     season: Optional[int]
@@ -19,6 +29,14 @@ class ParsedName:
 
 
 def parse_filename(path: Path) -> Optional[ParsedName]:
+    """Parse a source filename into a ParsedName using guessit.
+
+    Args:
+        path: Source file path; only the filename is inspected.
+
+    Returns:
+        A ParsedName, or None if guessit could not extract a title.
+    """
     guess = guessit(path.name)
 
     title = guess.get("title")

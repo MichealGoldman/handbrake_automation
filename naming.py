@@ -17,6 +17,19 @@ def _sanitize(text: str) -> str:
 
 
 def build_dest_path(match: MediaMatch, dest_root: Path) -> Path:
+    """Build the Plex/Jellyfin-style destination path for a match.
+
+    Low-confidence matches get REVIEW_MARKER appended to the filename (not
+    the folder name) so they're easy to find after a run.
+
+    Args:
+        match: The identified media to build a path for.
+        dest_root: Root of the destination tree.
+
+    Returns:
+        Full destination .mp4 path, e.g. "Movies/Title (Year)/Title
+        (Year).mp4" or "TV Shows/Show/Season 01/Show - S01E02.mp4".
+    """
     title = _sanitize(match.title)
 
     if match.media_type == "movie":

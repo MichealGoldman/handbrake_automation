@@ -14,7 +14,21 @@ YEAR_MATCH_BONUS = 5.0
 
 
 def search_movie(title: str, year: Optional[int], api_key: str) -> Optional[MediaMatch]:
-    params = {"api_key": api_key, "query": title, "include_adult": "false"}
+    """Search TMDb for a movie and return the best fuzzy-matched result.
+
+    Args:
+        title: Movie title to search for.
+        year: Release year, if known; scores an exact year match higher.
+        api_key: TMDb API key.
+
+    Returns:
+        The best-matching MediaMatch, or None if TMDb returned no results.
+    """
+    params: dict[str, str | int] = {
+        "api_key": api_key,
+        "query": title,
+        "include_adult": "false",
+    }
     if year:
         params["year"] = year
 

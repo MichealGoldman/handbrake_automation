@@ -19,7 +19,7 @@ NO_EPISODE_TITLE_CONFIDENCE_CAP = 60.0
 
 
 class TVDBAuthError(RuntimeError):
-    pass
+    """Raised when TVDB login succeeds but returns no usable token."""
 
 
 def _login(api_key: str) -> str:
@@ -32,7 +32,10 @@ def _login(api_key: str) -> str:
 
 
 class TVDBClient:
+    """Minimal TVDB v4 client that lazily authenticates on first request."""
+
     def __init__(self, api_key: str):
+        """Store the API key; the bearer token is fetched on first request."""
         self._api_key = api_key
         self._token: Optional[str] = None
 
@@ -48,8 +51,20 @@ class TVDBClient:
         resp.raise_for_status()
         return resp.json()
 
-    def search_series(self, title: str, year: Optional[int]):
-        """Returns (series_id, matched_title, matched_year, confidence) for the best match."""
+    def search_series(
+        self, title: str, year: Optional[int]
+    ) -> Optional[tuple[str, str, Optional[int], float]]:
+        """Search TVDB for a series and return the best fuzzy-matched result.
+
+        Args:
+            title: Series title to search for.
+            year: First-air year, if known; scores an exact year match
+                higher.
+
+        Returns:
+            A (series_id, matched_title, matched_year, confidence) tuple,
+            or None if TVDB returned no results.
+        """
         data = self._get("/search", params={"query": title, "type": "series"}).get(
             "data", []
         )
@@ -81,6 +96,17 @@ class TVDBClient:
     def get_episode_title(
         self, series_id: str, season: int, episode: int
     ) -> Optional[str]:
+        """Look up an episode's title by paging through a series' episodes.
+
+        Args:
+            series_id: TVDB series id, as returned by search_series.
+            season: Season number to look for.
+            episode: Episode number to look for.
+
+        Returns:
+            The episode's title, or None if no matching season/episode was
+            found within MAX_EPISODE_PAGES pages.
+        """
         page = 0
         while page < MAX_EPISODE_PAGES:
             payload = self._get(
@@ -99,6 +125,21 @@ class TVDBClient:
 def search_episode(
     client: TVDBClient, title: str, year: Optional[int], season: int, episode: int
 ) -> Optional[MediaMatch]:
+    """Search TVDB for a series and resolve one episode's title.
+
+    If no matching episode is found, confidence is capped below the review
+    threshold even if the series match itself was good.
+
+    Args:
+        client: Authenticated TVDB client.
+        title: Series title to search for.
+        year: First-air year, if known.
+        season: Season number to look up.
+        episode: Episode number to look up.
+
+    Returns:
+        A MediaMatch for the episode, or None if no series match was found.
+    """
     series_match = client.search_series(title, year)
     if series_match is None:
         return None
