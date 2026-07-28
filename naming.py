@@ -8,6 +8,13 @@ from pathlib import Path
 from models import MediaMatch
 
 REVIEW_MARKER = " --needs name review--"
+
+# Prefixes applied to the *source* file after processing, so SOURCE_DIR can be
+# read on its own to see what's been handled. DONE_ = converted with a
+# confident match; REVIEW_ = converted, but the match needs checking (the
+# source-side mirror of REVIEW_MARKER).
+DONE_PREFIX = "DONE_"
+REVIEW_PREFIX = "REVIEW_"
 _ILLEGAL_CHARS = re.compile(r'[<>:"/\\|?*]')
 
 

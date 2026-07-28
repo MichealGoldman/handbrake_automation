@@ -21,7 +21,7 @@ from convert import ConversionError, convert_file
 from discfolder import DiscEpisode, build_disc_plan
 from identify import parse_filename
 from models import MediaMatch
-from naming import build_dest_path
+from naming import DONE_PREFIX, REVIEW_PREFIX, build_dest_path
 from tvdb import TVDBClient, search_disc_episode, search_episode
 
 LOG_DIR = Path(__file__).parent / "logs"
@@ -40,6 +40,24 @@ def _setup_logging() -> Path:
         ],
     )
     return log_path
+
+
+def _tag_source(path: Path, needs_review: bool) -> bool:
+    """Rename a processed source file in place with a DONE_/REVIEW_ prefix."""
+    if path.name.startswith((DONE_PREFIX, REVIEW_PREFIX)):
+        # Already tagged by an earlier run; never re-tag or switch prefix.
+        return False
+
+    prefix = REVIEW_PREFIX if needs_review else DONE_PREFIX
+    try:
+        path.rename(path.with_name(prefix + path.name))
+    except OSError:
+        # The conversion already succeeded; only the cosmetic tag failed, so
+        # this must not affect the run's pass/fail counting or exit code.
+        logging.warning("Could not tag source file: %s", path, exc_info=True)
+        return False
+
+    return True
 
 
 def _identify(
@@ -138,6 +156,7 @@ def main() -> int:
     converted = 0
     skipped_existing = 0
     failed = 0
+    tagged = 0
     flagged: list[Path] = []
 
     for source_path in source_files:
@@ -156,6 +175,11 @@ def main() -> int:
         if dest_path.exists():
             logging.info("Skipping (already exists): %s", dest_path)
             skipped_existing += 1
+            # Self-healing: files converted before tagging existed (or by a
+            # run interrupted after conversion) get tagged here, so no
+            # separate backfill step is needed.
+            if _tag_source(source_path, match.needs_review):
+                tagged += 1
             continue
 
         if match.needs_review:
@@ -180,13 +204,16 @@ def main() -> int:
 
         logging.info("Converted -> %s", dest_path)
         converted += 1
+        if _tag_source(source_path, match.needs_review):
+            tagged += 1
 
     logging.info(
         "Done. Converted: %d, skipped (already existed): %d, failed: %d, "
-        "flagged for review: %d",
+        "tagged: %d, flagged for review: %d",
         converted,
         skipped_existing,
         failed,
+        tagged,
         len(flagged),
     )
     if flagged:

@@ -8,6 +8,8 @@ from typing import Optional
 
 from guessit import guessit
 
+from naming import DONE_PREFIX, REVIEW_PREFIX
+
 
 @dataclass(frozen=True)
 class ParsedName:
@@ -28,8 +30,18 @@ class ParsedName:
     episode: Optional[int]
 
 
+def _strip_processed_tag(name: str) -> str:
+    for prefix in (DONE_PREFIX, REVIEW_PREFIX):
+        if name.startswith(prefix):
+            return name[len(prefix) :]
+    return name
+
+
 def parse_filename(path: Path) -> Optional[ParsedName]:
     """Parse a source filename into a ParsedName using guessit.
+
+    A DONE_/REVIEW_ tag left by a previous run is stripped first, so tagging a
+    source file never degrades identification when it's scanned again.
 
     Args:
         path: Source file path; only the filename is inspected.
@@ -37,7 +49,7 @@ def parse_filename(path: Path) -> Optional[ParsedName]:
     Returns:
         A ParsedName, or None if guessit could not extract a title.
     """
-    guess = guessit(path.name)
+    guess = guessit(_strip_processed_tag(path.name))
 
     title = guess.get("title")
     if not title:
