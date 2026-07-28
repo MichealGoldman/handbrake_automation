@@ -7,6 +7,7 @@ from typing import Optional
 import requests
 from rapidfuzz import fuzz
 
+from discfolder import DiscEpisode
 from models import MediaMatch
 
 BASE_URL = "https://api4.thetvdb.com/v4"
@@ -93,6 +94,33 @@ class TVDBClient:
             return None
         return str(series_id), candidate_title, candidate_year, min(best_score, 100.0)
 
+    def get_season_episodes(self, series_id: str, season: int) -> list[dict]:
+        """Collect every episode of one season, ordered by episode number.
+
+        Args:
+            series_id: TVDB series id, as returned by search_series.
+            season: Season number to collect.
+
+        Returns:
+            The season's episodes sorted by episode number; empty if the
+            season wasn't found within MAX_EPISODE_PAGES pages.
+        """
+        found: list[dict] = []
+        page = 0
+        while page < MAX_EPISODE_PAGES:
+            payload = self._get(
+                f"/series/{series_id}/episodes/default", params={"page": page}
+            )
+            for ep in payload.get("data", {}).get("episodes", []):
+                if ep.get("seasonNumber") == season and ep.get("number") is not None:
+                    found.append(ep)
+            if not payload.get("links", {}).get("next"):
+                break
+            page += 1
+
+        found.sort(key=lambda ep: ep["number"])
+        return found
+
     def get_episode_title(
         self, series_id: str, season: int, episode: int
     ) -> Optional[str]:
@@ -120,6 +148,54 @@ class TVDBClient:
                 break
             page += 1
         return None
+
+
+def search_disc_episode(
+    client: TVDBClient, disc_episode: DiscEpisode
+) -> Optional[MediaMatch]:
+    """Resolve a positionally-numbered disc track against TVDB.
+
+    The positional numbering from discfolder is only trustworthy when the
+    number of ripped tracks matches the season's real episode count. When the
+    counts disagree -- extras on the disc, a missing rip, a split two-parter --
+    the mapping could be off by any amount, so confidence is capped below the
+    review threshold and the episode title is left off rather than guessed.
+
+    Args:
+        client: Authenticated TVDB client.
+        disc_episode: Positional assignment produced by
+            discfolder.build_disc_plan.
+
+    Returns:
+        A MediaMatch for the episode, or None if no series match was found.
+    """
+    series_match = client.search_series(disc_episode.show, None)
+    if series_match is None:
+        return None
+
+    series_id, matched_title, matched_year, confidence = series_match
+    episodes = client.get_season_episodes(series_id, disc_episode.season)
+
+    counts_agree = bool(episodes) and len(episodes) == disc_episode.group_size
+    episode_title = None
+
+    if counts_agree:
+        episode_title = episodes[disc_episode.episode - 1].get("name")
+    else:
+        # Track count and episode count disagree -- the positional mapping is
+        # unreliable, so flag rather than assert a title.
+        confidence = min(confidence, NO_EPISODE_TITLE_CONFIDENCE_CAP)
+
+    return MediaMatch(
+        media_type="episode",
+        title=matched_title,
+        year=matched_year,
+        season=disc_episode.season,
+        episode=disc_episode.episode,
+        episode_title=episode_title,
+        confidence=confidence,
+        source="tvdb",
+    )
 
 
 def search_episode(

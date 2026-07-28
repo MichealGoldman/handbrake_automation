@@ -18,10 +18,11 @@ from pathlib import Path
 import tmdb
 from config import Config, ConfigError, load_config
 from convert import ConversionError, convert_file
+from discfolder import DiscEpisode, build_disc_plan
 from identify import parse_filename
 from models import MediaMatch
 from naming import build_dest_path
-from tvdb import TVDBClient, search_episode
+from tvdb import TVDBClient, search_disc_episode, search_episode
 
 LOG_DIR = Path(__file__).parent / "logs"
 
@@ -41,7 +42,31 @@ def _setup_logging() -> Path:
     return log_path
 
 
-def _identify(path: Path, tvdb_client: TVDBClient, config: Config) -> MediaMatch:
+def _identify(
+    path: Path,
+    tvdb_client: TVDBClient,
+    config: Config,
+    disc_plan: dict[Path, DiscEpisode],
+) -> MediaMatch:
+    # Ripped-disc tracks carry no usable title in the filename; their show,
+    # season, and episode order come from the folder name instead.
+    disc_episode = disc_plan.get(path)
+    if disc_episode is not None:
+        match = search_disc_episode(tvdb_client, disc_episode)
+        if match is not None:
+            return match
+
+        return MediaMatch(
+            media_type="episode",
+            title=disc_episode.show,
+            year=None,
+            season=disc_episode.season,
+            episode=disc_episode.episode,
+            episode_title=None,
+            confidence=0.0,
+            source="none",
+        )
+
     parsed = parse_filename(path)
 
     if parsed is None:
@@ -102,6 +127,12 @@ def main() -> int:
     source_files = sorted(config.source_dir.rglob("*.mkv"))
     logging.info("Found %d .mkv file(s)", len(source_files))
 
+    disc_plan = build_disc_plan(source_files)
+    if disc_plan:
+        logging.info(
+            "%d file(s) resolved from ripped-disc folder names", len(disc_plan)
+        )
+
     tvdb_client = TVDBClient(config.tvdb_api_key)
 
     converted = 0
@@ -113,7 +144,7 @@ def main() -> int:
         logging.info("Processing: %s", source_path)
 
         try:
-            match = _identify(source_path, tvdb_client, config)
+            match = _identify(source_path, tvdb_client, config, disc_plan)
         except Exception:  # pylint: disable=broad-exception-caught
             # One bad file must not abort the whole run.
             logging.exception("Identification failed for %s", source_path)
