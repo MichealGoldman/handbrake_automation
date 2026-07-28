@@ -1,4 +1,5 @@
 """Minimal TVDB v4 client: search for a series and look up an episode title."""
+
 from __future__ import annotations
 
 from typing import Optional
@@ -41,13 +42,17 @@ class TVDBClient:
         return {"Authorization": f"Bearer {self._token}"}
 
     def _get(self, path: str, params: Optional[dict] = None) -> dict:
-        resp = requests.get(f"{BASE_URL}{path}", headers=self._headers(), params=params, timeout=15)
+        resp = requests.get(
+            f"{BASE_URL}{path}", headers=self._headers(), params=params, timeout=15
+        )
         resp.raise_for_status()
         return resp.json()
 
     def search_series(self, title: str, year: Optional[int]):
         """Returns (series_id, matched_title, matched_year, confidence) for the best match."""
-        data = self._get("/search", params={"query": title, "type": "series"}).get("data", [])
+        data = self._get("/search", params={"query": title, "type": "series"}).get(
+            "data", []
+        )
         if not data:
             return None
 
@@ -73,10 +78,14 @@ class TVDBClient:
             return None
         return str(series_id), candidate_title, candidate_year, min(best_score, 100.0)
 
-    def get_episode_title(self, series_id: str, season: int, episode: int) -> Optional[str]:
+    def get_episode_title(
+        self, series_id: str, season: int, episode: int
+    ) -> Optional[str]:
         page = 0
         while page < MAX_EPISODE_PAGES:
-            payload = self._get(f"/series/{series_id}/episodes/default", params={"page": page})
+            payload = self._get(
+                f"/series/{series_id}/episodes/default", params={"page": page}
+            )
             episodes = payload.get("data", {}).get("episodes", [])
             for ep in episodes:
                 if ep.get("seasonNumber") == season and ep.get("number") == episode:

@@ -4,6 +4,7 @@ them to .mp4 with HandBrakeCLI into a Plex/Jellyfin-style folder structure.
 Usage:
     python main.py
 """
+
 from __future__ import annotations
 
 import logging
@@ -11,12 +12,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import tmdb
 from config import Config, ConfigError, load_config
 from convert import ConversionError, convert_file
 from identify import parse_filename
 from models import MediaMatch
 from naming import build_dest_path
-import tmdb
 from tvdb import TVDBClient, search_episode
 
 LOG_DIR = Path(__file__).parent / "logs"
@@ -41,12 +42,20 @@ def _identify(path: Path, tvdb_client: TVDBClient, config: Config) -> MediaMatch
     parsed = parse_filename(path)
 
     if parsed is None:
-        return MediaMatch(media_type="movie", title=path.stem, year=None, confidence=0.0, source="none")
+        return MediaMatch(
+            media_type="movie",
+            title=path.stem,
+            year=None,
+            confidence=0.0,
+            source="none",
+        )
 
     if parsed.media_type == "movie":
         match = tmdb.search_movie(parsed.title, parsed.year, config.tmdb_api_key)
     else:
-        match = search_episode(tvdb_client, parsed.title, parsed.year, parsed.season, parsed.episode)
+        match = search_episode(
+            tvdb_client, parsed.title, parsed.year, parsed.season, parsed.episode
+        )
 
     if match is not None:
         return match
@@ -108,10 +117,19 @@ def main() -> int:
 
         if match.needs_review:
             flagged.append(dest_path)
-            logging.warning("Low-confidence match (%.0f%%), flagged for review: %s", match.confidence, dest_path)
+            logging.warning(
+                "Low-confidence match (%.0f%%), flagged for review: %s",
+                match.confidence,
+                dest_path,
+            )
 
         try:
-            convert_file(source_path, dest_path, config.handbrake_cli_path, config.handbrake_preset)
+            convert_file(
+                source_path,
+                dest_path,
+                config.handbrake_cli_path,
+                config.handbrake_preset,
+            )
         except ConversionError:
             logging.exception("Conversion failed for %s", source_path)
             failed += 1
@@ -122,7 +140,10 @@ def main() -> int:
 
     logging.info(
         "Done. Converted: %d, skipped (already existed): %d, failed: %d, flagged for review: %d",
-        converted, skipped_existing, failed, len(flagged),
+        converted,
+        skipped_existing,
+        failed,
+        len(flagged),
     )
     if flagged:
         logging.info("Flagged for review:")

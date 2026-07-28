@@ -1,4 +1,5 @@
 """Minimal TMDb client: search for a movie and return the best fuzzy match."""
+
 from __future__ import annotations
 
 from typing import Optional

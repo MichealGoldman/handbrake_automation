@@ -1,4 +1,5 @@
 """Shared result type produced by the TMDb/TVDB clients and consumed by naming.py."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

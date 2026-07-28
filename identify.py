@@ -1,4 +1,5 @@
 """Parses messy source filenames into structured hints using guessit."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -1,12 +1,13 @@
 """Loads settings from .env into a single Config object."""
+
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
-import os
 
 load_dotenv()
 
@@ -18,14 +19,18 @@ class ConfigError(RuntimeError):
 def _require(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
-        raise ConfigError(f"{name} is not set. Copy .env.example to .env and fill it in.")
+        raise ConfigError(
+            f"{name} is not set. Copy .env.example to .env and fill it in."
+        )
     return value
 
 
 def _resolve_handbrake_cli(configured_path: str) -> str:
     if configured_path:
         if not Path(configured_path).is_file():
-            raise ConfigError(f"HANDBRAKE_CLI_PATH does not point to a file: {configured_path}")
+            raise ConfigError(
+                f"HANDBRAKE_CLI_PATH does not point to a file: {configured_path}"
+            )
         return configured_path
 
     found = shutil.which("HandBrakeCLI")
@@ -53,10 +58,16 @@ def load_config() -> Config:
     dest_dir = Path(_require("DEST_DIR"))
 
     if not source_dir.is_dir():
-        raise ConfigError(f"SOURCE_DIR does not exist or is not a directory: {source_dir}")
+        raise ConfigError(
+            f"SOURCE_DIR does not exist or is not a directory: {source_dir}"
+        )
 
-    handbrake_preset = os.environ.get("HANDBRAKE_PRESET", "").strip() or "Super HQ 1080p30 Surround"
-    handbrake_cli_path = _resolve_handbrake_cli(os.environ.get("HANDBRAKE_CLI_PATH", "").strip())
+    handbrake_preset = (
+        os.environ.get("HANDBRAKE_PRESET", "").strip() or "Super HQ 1080p30 Surround"
+    )
+    handbrake_cli_path = _resolve_handbrake_cli(
+        os.environ.get("HANDBRAKE_CLI_PATH", "").strip()
+    )
 
     return Config(
         source_dir=source_dir,

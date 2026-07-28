@@ -1,4 +1,5 @@
 """Builds Plex/Jellyfin-style destination paths from a MediaMatch."""
+
 from __future__ import annotations
 
 import re

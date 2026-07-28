@@ -1,0 +1,6 @@
+pylint>=3.0.0
+pydocstyle>=6.3.0
+pycodestyle>=2.11.0
+black>=24.0.0
+isort>=5.13.0
+mypy>=1.8.0
