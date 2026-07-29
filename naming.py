@@ -9,6 +9,13 @@ from models import MediaMatch
 
 REVIEW_MARKER = " --needs name review--"
 
+# Top-level library folders created under DEST_DIR. These are lowercase to
+# match the existing Jellyfin tree rather than the conventional "Movies"/"TV
+# Shows" -- writing those into a library that uses "movies"/"shows" builds a
+# second, parallel library sitting next to the real one.
+MOVIES_FOLDER = "movies"
+SHOWS_FOLDER = "shows"
+
 # Prefixes applied to the *source* file after processing, so SOURCE_DIR can be
 # read on its own to see what's been handled. DONE_ = converted with a
 # confident match; REVIEW_ = converted, but the match needs checking (the
@@ -34,8 +41,8 @@ def build_dest_path(match: MediaMatch, dest_root: Path) -> Path:
         dest_root: Root of the destination tree.
 
     Returns:
-        Full destination .mp4 path, e.g. "Movies/Title (Year)/Title
-        (Year).mp4" or "TV Shows/Show/Season 01/Show - S01E02.mp4".
+        Full destination .mp4 path, e.g. "movies/Title (Year)/Title
+        (Year).mp4" or "shows/Show/Season 01/Show - S01E02.mp4".
     """
     title = _sanitize(match.title)
 
@@ -44,7 +51,7 @@ def build_dest_path(match: MediaMatch, dest_root: Path) -> Path:
         filename = folder_name
         if match.needs_review:
             filename += REVIEW_MARKER
-        return dest_root / "Movies" / folder_name / f"{filename}.mp4"
+        return dest_root / MOVIES_FOLDER / folder_name / f"{filename}.mp4"
 
     season = match.season or 0
     episode = match.episode or 0
@@ -56,4 +63,4 @@ def build_dest_path(match: MediaMatch, dest_root: Path) -> Path:
     if match.needs_review:
         filename += REVIEW_MARKER
 
-    return dest_root / "TV Shows" / title / season_folder / f"{filename}.mp4"
+    return dest_root / SHOWS_FOLDER / title / season_folder / f"{filename}.mp4"

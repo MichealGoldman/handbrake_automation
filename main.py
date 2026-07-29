@@ -12,19 +12,57 @@ from __future__ import annotations
 
 import logging
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 import tmdb
 from config import Config, ConfigError, load_config
-from convert import ConversionError, convert_file
+from convert import (
+    ConversionError,
+    convert_file,
+    is_complete_output,
+    remove_partial_output,
+)
 from discfolder import DiscEpisode, build_disc_plan
 from identify import parse_filename
 from models import MediaMatch
 from naming import DONE_PREFIX, REVIEW_PREFIX, build_dest_path
 from tvdb import TVDBClient, search_disc_episode, search_episode
+from wakelock import keep_awake
 
 LOG_DIR = Path(__file__).parent / "logs"
+
+
+@dataclass
+class _RunStats:
+    """Per-run tallies, reported in the closing summary line."""
+
+    converted: int = 0
+    skipped_existing: int = 0
+    repaired: int = 0
+    failed: int = 0
+    tagged: int = 0
+    flagged: list[Path] = field(default_factory=list)
+
+
+def _log_summary(stats: _RunStats) -> None:
+    """Log the run totals, then every destination flagged for review."""
+    logging.info(
+        "Done. Converted: %d, skipped (already existed): %d, "
+        "re-converted (partial output): %d, failed: %d, "
+        "tagged: %d, flagged for review: %d",
+        stats.converted,
+        stats.skipped_existing,
+        stats.repaired,
+        stats.failed,
+        stats.tagged,
+        len(stats.flagged),
+    )
+    if stats.flagged:
+        logging.info("Flagged for review:")
+        for path in stats.flagged:
+            logging.info("  %s", path)
 
 
 def _setup_logging() -> Path:
@@ -122,6 +160,74 @@ def _identify(
     )
 
 
+def _process_file(
+    source_path: Path,
+    tvdb_client: TVDBClient,
+    config: Config,
+    disc_plan: dict[Path, DiscEpisode],
+    stats: _RunStats,
+) -> None:
+    """Identify, convert, and tag one source file, recording the outcome."""
+    logging.info("Processing: %s", source_path)
+
+    try:
+        match = _identify(source_path, tvdb_client, config, disc_plan)
+    except Exception:  # pylint: disable=broad-exception-caught
+        # One bad file must not abort the whole run.
+        logging.exception("Identification failed for %s", source_path)
+        stats.failed += 1
+        return
+
+    dest_path = build_dest_path(match, config.dest_dir)
+
+    if dest_path.exists():
+        if is_complete_output(source_path, dest_path):
+            logging.info("Skipping (already exists): %s", dest_path)
+            stats.skipped_existing += 1
+            # Self-healing: files converted before tagging existed (or by a
+            # run interrupted after conversion) get tagged here, so no
+            # separate backfill step is needed.
+            if _tag_source(source_path, match.needs_review):
+                stats.tagged += 1
+            return
+
+        # Truncated leftover from an interrupted run. Left in place it would
+        # satisfy the check above on every future run, so the episode would
+        # stay broken forever -- discard it and encode again.
+        logging.warning(
+            "Destination exists but is too small to be a finished encode; "
+            "re-converting: %s",
+            dest_path,
+        )
+        remove_partial_output(dest_path)
+        stats.repaired += 1
+
+    if match.needs_review:
+        stats.flagged.append(dest_path)
+        logging.warning(
+            "Low-confidence match (%.0f%%), flagged for review: %s",
+            match.confidence,
+            dest_path,
+        )
+
+    try:
+        convert_file(
+            source_path,
+            dest_path,
+            config.handbrake_cli_path,
+            config.handbrake_preset,
+        )
+    except ConversionError:
+        logging.exception("Conversion failed for %s", source_path)
+        stats.failed += 1
+        return
+
+    logging.info("Converted -> %s", dest_path)
+    stats.converted += 1
+    if _tag_source(source_path, match.needs_review):
+        stats.tagged += 1
+
+
 def main() -> int:
     """Run the full scan -> identify -> convert pipeline.
 
@@ -153,75 +259,18 @@ def main() -> int:
 
     tvdb_client = TVDBClient(config.tvdb_api_key)
 
-    converted = 0
-    skipped_existing = 0
-    failed = 0
-    tagged = 0
-    flagged: list[Path] = []
+    stats = _RunStats()
 
-    for source_path in source_files:
-        logging.info("Processing: %s", source_path)
+    with keep_awake() as awake:
+        if awake:
+            logging.info("Sleep suppressed until the run finishes")
 
-        try:
-            match = _identify(source_path, tvdb_client, config, disc_plan)
-        except Exception:  # pylint: disable=broad-exception-caught
-            # One bad file must not abort the whole run.
-            logging.exception("Identification failed for %s", source_path)
-            failed += 1
-            continue
+        for source_path in source_files:
+            _process_file(source_path, tvdb_client, config, disc_plan, stats)
 
-        dest_path = build_dest_path(match, config.dest_dir)
+    _log_summary(stats)
 
-        if dest_path.exists():
-            logging.info("Skipping (already exists): %s", dest_path)
-            skipped_existing += 1
-            # Self-healing: files converted before tagging existed (or by a
-            # run interrupted after conversion) get tagged here, so no
-            # separate backfill step is needed.
-            if _tag_source(source_path, match.needs_review):
-                tagged += 1
-            continue
-
-        if match.needs_review:
-            flagged.append(dest_path)
-            logging.warning(
-                "Low-confidence match (%.0f%%), flagged for review: %s",
-                match.confidence,
-                dest_path,
-            )
-
-        try:
-            convert_file(
-                source_path,
-                dest_path,
-                config.handbrake_cli_path,
-                config.handbrake_preset,
-            )
-        except ConversionError:
-            logging.exception("Conversion failed for %s", source_path)
-            failed += 1
-            continue
-
-        logging.info("Converted -> %s", dest_path)
-        converted += 1
-        if _tag_source(source_path, match.needs_review):
-            tagged += 1
-
-    logging.info(
-        "Done. Converted: %d, skipped (already existed): %d, failed: %d, "
-        "tagged: %d, flagged for review: %d",
-        converted,
-        skipped_existing,
-        failed,
-        tagged,
-        len(flagged),
-    )
-    if flagged:
-        logging.info("Flagged for review:")
-        for path in flagged:
-            logging.info("  %s", path)
-
-    return 0 if failed == 0 else 2
+    return 0 if stats.failed == 0 else 2
 
 
 if __name__ == "__main__":
