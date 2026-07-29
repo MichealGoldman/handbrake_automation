@@ -12,9 +12,13 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Iterator
 
 import tmdb
 from config import Config, ConfigError, load_config
@@ -33,6 +37,11 @@ from wakelock import keep_awake
 
 LOG_DIR = Path(__file__).parent / "logs"
 
+# How often to log a "still encoding" line during a single conversion. Long
+# enough not to clutter the log, short enough to tell a working encode from a
+# hung one.
+HEARTBEAT_INTERVAL = 600.0
+
 
 @dataclass
 class _RunStats:
@@ -46,12 +55,49 @@ class _RunStats:
     flagged: list[Path] = field(default_factory=list)
 
 
-def _log_summary(stats: _RunStats) -> None:
+def _format_duration(seconds: float) -> str:
+    minutes, secs = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {secs:02d}s"
+    if minutes:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
+
+@contextmanager
+def _heartbeat(label: str) -> Iterator[None]:
+    # HandBrake's own output is captured, so a multi-hour encode is otherwise a
+    # silent gap in the log with no way to tell progress from a hang.
+    stop = threading.Event()
+    started = time.monotonic()
+
+    def tick() -> None:
+        # wait() returns True once stop is set, so the loop ends promptly on
+        # the way out instead of sleeping out the rest of the interval.
+        while not stop.wait(HEARTBEAT_INTERVAL):
+            logging.info(
+                "Still encoding %s (%s elapsed)",
+                label,
+                _format_duration(time.monotonic() - started),
+            )
+
+    thread = threading.Thread(target=tick, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=1)
+
+
+def _log_summary(stats: _RunStats, elapsed: float) -> None:
     """Log the run totals, then every destination flagged for review."""
     logging.info(
-        "Done. Converted: %d, skipped (already existed): %d, "
+        "Done in %s. Converted: %d, skipped (already existed): %d, "
         "re-converted (partial output): %d, failed: %d, "
         "tagged: %d, flagged for review: %d",
+        _format_duration(elapsed),
         stats.converted,
         stats.skipped_existing,
         stats.repaired,
@@ -168,8 +214,6 @@ def _process_file(
     stats: _RunStats,
 ) -> None:
     """Identify, convert, and tag one source file, recording the outcome."""
-    logging.info("Processing: %s", source_path)
-
     try:
         match = _identify(source_path, tvdb_client, config, disc_plan)
     except Exception:  # pylint: disable=broad-exception-caught
@@ -210,19 +254,29 @@ def _process_file(
             dest_path,
         )
 
+    started = time.monotonic()
     try:
-        convert_file(
-            source_path,
-            dest_path,
-            config.handbrake_cli_path,
-            config.handbrake_preset,
-        )
+        with _heartbeat(source_path.name):
+            convert_file(
+                source_path,
+                dest_path,
+                config.handbrake_cli_path,
+                config.handbrake_preset,
+            )
     except ConversionError:
-        logging.exception("Conversion failed for %s", source_path)
+        logging.exception(
+            "Conversion failed after %s for %s",
+            _format_duration(time.monotonic() - started),
+            source_path,
+        )
         stats.failed += 1
         return
 
-    logging.info("Converted -> %s", dest_path)
+    logging.info(
+        "Converted in %s -> %s",
+        _format_duration(time.monotonic() - started),
+        dest_path,
+    )
     stats.converted += 1
     if _tag_source(source_path, match.needs_review):
         stats.tagged += 1
@@ -260,15 +314,19 @@ def main() -> int:
     tvdb_client = TVDBClient(config.tvdb_api_key)
 
     stats = _RunStats()
+    run_started = time.monotonic()
 
     with keep_awake() as awake:
         if awake:
             logging.info("Sleep suppressed until the run finishes")
 
-        for source_path in source_files:
+        for index, source_path in enumerate(source_files, start=1):
+            logging.info(
+                "Processing [%d/%d]: %s", index, len(source_files), source_path
+            )
             _process_file(source_path, tvdb_client, config, disc_plan, stats)
 
-    _log_summary(stats)
+    _log_summary(stats, time.monotonic() - run_started)
 
     return 0 if stats.failed == 0 else 2
 
