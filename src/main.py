@@ -5,7 +5,7 @@ converts it with HandBrakeCLI into DEST_DIR's Plex/Jellyfin-style folder
 structure.
 
 Usage:
-    python main.py
+    python src/main.py
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator
@@ -26,16 +26,23 @@ from convert import (
     ConversionError,
     convert_file,
     is_complete_output,
+    probe_height,
     remove_partial_output,
+    select_preset,
 )
-from discfolder import DiscEpisode, build_disc_plan
+from discfolder import (
+    AMBIGUOUS_FEATURE_CONFIDENCE,
+    MovieRip,
+    RipPlan,
+    build_rip_plan,
+)
 from identify import parse_filename
 from models import MediaMatch
-from naming import DONE_PREFIX, REVIEW_PREFIX, build_dest_path
+from naming import DONE_PREFIX, REVIEW_PREFIX, SKIP_PREFIX, build_dest_path
 from tvdb import TVDBClient, search_disc_episode, search_episode
 from wakelock import keep_awake
 
-LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 
 # How often to log a "still encoding" line during a single conversion. Long
 # enough not to clutter the log, short enough to tell a working encode from a
@@ -49,6 +56,7 @@ class _RunStats:
 
     converted: int = 0
     skipped_existing: int = 0
+    skipped_extras: int = 0
     repaired: int = 0
     failed: int = 0
     tagged: int = 0
@@ -95,11 +103,12 @@ def _log_summary(stats: _RunStats, elapsed: float) -> None:
     """Log the run totals, then every destination flagged for review."""
     logging.info(
         "Done in %s. Converted: %d, skipped (already existed): %d, "
-        "re-converted (partial output): %d, failed: %d, "
-        "tagged: %d, flagged for review: %d",
+        "skipped (disc extras): %d, re-converted (partial output): %d, "
+        "failed: %d, tagged: %d, flagged for review: %d",
         _format_duration(elapsed),
         stats.converted,
         stats.skipped_existing,
+        stats.skipped_extras,
         stats.repaired,
         stats.failed,
         stats.tagged,
@@ -126,13 +135,16 @@ def _setup_logging() -> Path:
     return log_path
 
 
-def _tag_source(path: Path, needs_review: bool) -> bool:
-    """Rename a processed source file in place with a DONE_/REVIEW_ prefix."""
-    if path.name.startswith((DONE_PREFIX, REVIEW_PREFIX)):
+def _outcome_prefix(match: MediaMatch) -> str:
+    return REVIEW_PREFIX if match.needs_review else DONE_PREFIX
+
+
+def _tag_source(path: Path, prefix: str) -> bool:
+    """Rename a processed source file in place with a DONE_/REVIEW_/SKIP_ prefix."""
+    if path.name.startswith((DONE_PREFIX, REVIEW_PREFIX, SKIP_PREFIX)):
         # Already tagged by an earlier run; never re-tag or switch prefix.
         return False
 
-    prefix = REVIEW_PREFIX if needs_review else DONE_PREFIX
     try:
         path.rename(path.with_name(prefix + path.name))
     except OSError:
@@ -144,15 +156,40 @@ def _tag_source(path: Path, needs_review: bool) -> bool:
     return True
 
 
+def _identify_movie_rip(movie_rip: MovieRip, config: Config) -> MediaMatch:
+    # No year: disc folder names don't carry one.
+    match = tmdb.search_movie(movie_rip.title, None, config.tmdb_api_key)
+
+    if match is None:
+        return MediaMatch(
+            media_type="movie",
+            title=movie_rip.title,
+            year=None,
+            confidence=0.0,
+            source="none",
+        )
+
+    if movie_rip.ambiguous:
+        # Another track was nearly as large, so the feature pick is a guess.
+        # Cap rather than assert, matching how an untrustworthy episode
+        # mapping is handled.
+        return replace(
+            match,
+            confidence=min(match.confidence, AMBIGUOUS_FEATURE_CONFIDENCE),
+        )
+
+    return match
+
+
 def _identify(
     path: Path,
     tvdb_client: TVDBClient,
     config: Config,
-    disc_plan: dict[Path, DiscEpisode],
+    plan: RipPlan,
 ) -> MediaMatch:
     # Ripped-disc tracks carry no usable title in the filename; their show,
     # season, and episode order come from the folder name instead.
-    disc_episode = disc_plan.get(path)
+    disc_episode = plan.episodes.get(path)
     if disc_episode is not None:
         match = search_disc_episode(tvdb_client, disc_episode)
         if match is not None:
@@ -168,6 +205,12 @@ def _identify(
             confidence=0.0,
             source="none",
         )
+
+    # Same problem on a movie disc, minus the numbering: the folder name is
+    # the only place the title survives.
+    movie_rip = plan.movies.get(path)
+    if movie_rip is not None:
+        return _identify_movie_rip(movie_rip, config)
 
     parsed = parse_filename(path)
 
@@ -210,12 +253,22 @@ def _process_file(
     source_path: Path,
     tvdb_client: TVDBClient,
     config: Config,
-    disc_plan: dict[Path, DiscEpisode],
+    plan: RipPlan,
     stats: _RunStats,
 ) -> None:
     """Identify, convert, and tag one source file, recording the outcome."""
+    # Checked before identification so a track that won't be encoded costs no
+    # API call either.
+    movie_rip = plan.movies.get(source_path)
+    if movie_rip is not None and not movie_rip.is_feature:
+        logging.info("Skipping extra: %s", source_path)
+        stats.skipped_extras += 1
+        if _tag_source(source_path, SKIP_PREFIX):
+            stats.tagged += 1
+        return
+
     try:
-        match = _identify(source_path, tvdb_client, config, disc_plan)
+        match = _identify(source_path, tvdb_client, config, plan)
     except Exception:  # pylint: disable=broad-exception-caught
         # One bad file must not abort the whole run.
         logging.exception("Identification failed for %s", source_path)
@@ -231,7 +284,7 @@ def _process_file(
             # Self-healing: files converted before tagging existed (or by a
             # run interrupted after conversion) get tagged here, so no
             # separate backfill step is needed.
-            if _tag_source(source_path, match.needs_review):
+            if _tag_source(source_path, _outcome_prefix(match)):
                 stats.tagged += 1
             return
 
@@ -254,6 +307,11 @@ def _process_file(
             dest_path,
         )
 
+    height = probe_height(source_path, config.handbrake_cli_path)
+    preset = select_preset(height, config.handbrake_preset, config.handbrake_preset_hd)
+    if preset != config.handbrake_preset:
+        logging.info("Source is %sp, using preset: %s", height, preset)
+
     started = time.monotonic()
     try:
         with _heartbeat(source_path.name):
@@ -261,7 +319,8 @@ def _process_file(
                 source_path,
                 dest_path,
                 config.handbrake_cli_path,
-                config.handbrake_preset,
+                preset,
+                config.cpu_percent,
             )
     except ConversionError:
         logging.exception(
@@ -278,7 +337,7 @@ def _process_file(
         dest_path,
     )
     stats.converted += 1
-    if _tag_source(source_path, match.needs_review):
+    if _tag_source(source_path, _outcome_prefix(match)):
         stats.tagged += 1
 
 
@@ -305,10 +364,16 @@ def main() -> int:
     source_files = sorted(config.source_dir.rglob("*.mkv"))
     logging.info("Found %d .mkv file(s)", len(source_files))
 
-    disc_plan = build_disc_plan(source_files)
-    if disc_plan:
+    plan = build_rip_plan(source_files, config.source_dir)
+    features = sum(1 for rip in plan.movies.values() if rip.is_feature)
+    extras = len(plan.movies) - features
+    if plan.episodes or plan.movies:
         logging.info(
-            "%d file(s) resolved from ripped-disc folder names", len(disc_plan)
+            "%d episode track(s) and %d movie feature(s) resolved from folder "
+            "names; %d extra track(s) will be skipped",
+            len(plan.episodes),
+            features,
+            extras,
         )
 
     tvdb_client = TVDBClient(config.tvdb_api_key)
@@ -324,7 +389,7 @@ def main() -> int:
             logging.info(
                 "Processing [%d/%d]: %s", index, len(source_files), source_path
             )
-            _process_file(source_path, tvdb_client, config, disc_plan, stats)
+            _process_file(source_path, tvdb_client, config, plan, stats)
 
     _log_summary(stats, time.monotonic() - run_started)
 

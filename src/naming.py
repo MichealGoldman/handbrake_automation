@@ -9,19 +9,24 @@ from models import MediaMatch
 
 REVIEW_MARKER = " --needs name review--"
 
-# Top-level library folders created under DEST_DIR. These are lowercase to
-# match the existing Jellyfin tree rather than the conventional "Movies"/"TV
-# Shows" -- writing those into a library that uses "movies"/"shows" builds a
-# second, parallel library sitting next to the real one.
-MOVIES_FOLDER = "movies"
-SHOWS_FOLDER = "shows"
+# Top-level library folders created under DEST_DIR. These must match the
+# Jellyfin tree exactly -- writing a differently-named folder into the library
+# builds a second, parallel one sitting next to the real one. The library moved
+# to E:\media in Aug 2026 and uses "Movies"/"Shows"; it previously used
+# lowercase. Windows compares paths case-insensitively so the difference is
+# cosmetic there, but it is not on a Linux Jellyfin host reading the same tree.
+MOVIES_FOLDER = "Movies"
+SHOWS_FOLDER = "Shows"
 
 # Prefixes applied to the *source* file after processing, so SOURCE_DIR can be
 # read on its own to see what's been handled. DONE_ = converted with a
 # confident match; REVIEW_ = converted, but the match needs checking (the
-# source-side mirror of REVIEW_MARKER).
+# source-side mirror of REVIEW_MARKER); SKIP_ = deliberately not converted,
+# being bonus material on a movie disc. SKIP_ has to be its own prefix --
+# tagging an extra DONE_ would assert it had been converted.
 DONE_PREFIX = "DONE_"
 REVIEW_PREFIX = "REVIEW_"
+SKIP_PREFIX = "SKIP_"
 _ILLEGAL_CHARS = re.compile(r'[<>:"/\\|?*]')
 
 

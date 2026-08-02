@@ -8,7 +8,7 @@ from typing import Optional
 
 from guessit import guessit
 
-from naming import DONE_PREFIX, REVIEW_PREFIX
+from naming import DONE_PREFIX, REVIEW_PREFIX, SKIP_PREFIX
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,7 @@ class ParsedName:
 
 
 def _strip_processed_tag(name: str) -> str:
-    for prefix in (DONE_PREFIX, REVIEW_PREFIX):
+    for prefix in (DONE_PREFIX, REVIEW_PREFIX, SKIP_PREFIX):
         if name.startswith(prefix):
             return name[len(prefix) :]
     return name
@@ -40,8 +40,9 @@ def _strip_processed_tag(name: str) -> str:
 def parse_filename(path: Path) -> Optional[ParsedName]:
     """Parse a source filename into a ParsedName using guessit.
 
-    A DONE_/REVIEW_ tag left by a previous run is stripped first, so tagging a
-    source file never degrades identification when it's scanned again.
+    A DONE_/REVIEW_/SKIP_ tag left by a previous run is stripped first, so
+    tagging a source file never degrades identification when it's scanned
+    again.
 
     Args:
         path: Source file path; only the filename is inspected.

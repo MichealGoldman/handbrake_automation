@@ -1,10 +1,10 @@
-"""Auto-fixes and checks every top-level .py file in the project.
+"""Auto-fixes and checks the project's .py files.
 
 Runs isort and black (auto-fix), then pycodestyle, pydocstyle, pylint, and
-mypy (check-only) across the project's Python files.
+mypy (check-only) across lint.py itself plus src/ and tests/.
 
 Usage:
-    python lint.py               # lint every top-level .py file
+    python lint.py                # lint lint.py, src/*.py, and tests/*.py
     python lint.py foo.py bar.py  # lint only the given files
 """
 
@@ -30,7 +30,8 @@ CHECK_TOOLS = [
 
 
 def _default_targets() -> list[str]:
-    return sorted(str(p) for p in ROOT.glob("*.py"))
+    paths = [ROOT / "lint.py", *ROOT.glob("src/*.py"), *ROOT.glob("tests/*.py")]
+    return sorted(str(p) for p in paths)
 
 
 def _run(command: list[str], targets: list[str]) -> int:

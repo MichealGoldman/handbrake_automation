@@ -22,3 +22,8 @@ disable = [
 check_untyped_defs = true
 warn_unused_ignores = true
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+# src/ is a plain directory, not a package; main.py puts it on sys.path at
+# runtime, and this does the same for the tests.
+pythonpath = ["src"]
