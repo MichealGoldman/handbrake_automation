@@ -1,4 +1,4 @@
-"""Tests for how HandBrakeCLI is invoked and how partial output is handled."""
+﻿"""Tests for how HandBrakeCLI is invoked and how partial output is handled."""
 
 from __future__ import annotations
 
@@ -86,6 +86,42 @@ def test_subtitles_are_not_burned_into_the_picture(tmp_path: Path, calls) -> Non
     convert.convert_file(tmp_path / "in.mkv", tmp_path / "out.mp4", "HandBrakeCLI", "P")
 
     assert "--subtitle-burned=none" in calls[0]["args"]
+
+
+@pytest.mark.parametrize(
+    ("codecs", "expected"),
+    [
+        # VobSub off a DVD muxes into MP4 as a real track.
+        ({"dvd_subtitle"}, True),
+        ({"subrip"}, True),
+        (set(), True),
+        # PGS off a Blu-ray cannot be muxed into MP4. HandBrake burns it into
+        # the picture instead, and --subtitle-burned=none does not stop it --
+        # verified by encoding the same segment with and without subtitles
+        # requested and comparing frames.
+        ({"hdmv_pgs_subtitle"}, False),
+        ({"dvd_subtitle", "hdmv_pgs_subtitle"}, False),
+        # Anything unrecognised is treated as unsafe: the cost of being wrong
+        # is subtitles burned permanently into the video.
+        ({"something_new"}, False),
+    ],
+)
+def test_subtitles_only_kept_when_they_can_be_muxed(codecs, expected: bool) -> None:
+    assert convert.keep_subtitles(codecs) is expected
+
+
+def test_subtitles_disabled_when_they_would_be_burned(tmp_path: Path, calls) -> None:
+    convert.convert_file(
+        tmp_path / "in.mkv",
+        tmp_path / "out.mp4",
+        "HandBrakeCLI",
+        "P",
+        with_subtitles=False,
+    )
+
+    args = calls[0]["args"]
+    assert "--subtitle" in args and "none" in args
+    assert "--all-subtitles" not in args
 
 
 @pytest.mark.parametrize(

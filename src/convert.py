@@ -31,6 +31,20 @@ SD_MAX_HEIGHT = 576
 # "+ size: 1916x820" in HandBrake's scan output.
 _SIZE_RE = re.compile(r"\+ size: (\d+)x(\d+)")
 
+# "Stream #0:3(eng): Subtitle: hdmv_pgs_subtitle (pgssub)" -- the codec name.
+_SUBTITLE_RE = re.compile(r"Subtitle:\s+(\w+)")
+
+# Subtitle formats HandBrake can actually mux into an MP4. Deliberately an
+# allowlist: PGS (Blu-ray) cannot be muxed, and rather than failing or
+# dropping it HandBrake renders it permanently into the picture -- and
+# --subtitle-burned=none does not prevent that. Verified by encoding one
+# segment with and without subtitles requested and comparing the frames. An
+# unrecognised format is treated as unsafe, because the cost of guessing
+# wrong is a film with subtitles burned into every line of dialogue.
+MP4_MUXABLE_SUBTITLES = frozenset(
+    {"dvd_subtitle", "subrip", "srt", "mov_text", "text", "ass", "ssa"}
+)
+
 
 def probe_height(source: Path, handbrake_cli_path: str) -> Optional[int]:
     """Read a source's picture height by scanning it with HandBrake.
@@ -61,6 +75,45 @@ def probe_height(source: Path, handbrake_cli_path: str) -> Optional[int]:
 
     found = _SIZE_RE.search(result.stdout + result.stderr)
     return int(found.group(2)) if found else None
+
+
+def probe_subtitle_codecs(source: Path, handbrake_cli_path: str) -> set:
+    """Report which subtitle formats a source carries.
+
+    Args:
+        source: File to scan.
+        handbrake_cli_path: Path to the HandBrakeCLI executable.
+
+    Returns:
+        Codec names as HandBrake reports them, e.g. {"dvd_subtitle"} or
+        {"hdmv_pgs_subtitle"}. Empty if the scan failed or found none.
+    """
+    try:
+        result = subprocess.run(
+            [handbrake_cli_path, "-i", str(source), "--scan", "-t", "1"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+            creationflags=_priority_flags(),
+        )
+    except OSError:
+        return set()
+
+    return set(_SUBTITLE_RE.findall(result.stdout + result.stderr))
+
+
+def keep_subtitles(codecs) -> bool:
+    """Decide whether subtitles can be asked for without them being burned in.
+
+    Args:
+        codecs: Subtitle codec names found in the source.
+
+    Returns:
+        True only if every format present can be muxed into MP4. A source
+        with no subtitles returns True, since the request is then a no-op.
+    """
+    return all(codec in MP4_MUXABLE_SUBTITLES for codec in codecs)
 
 
 def select_preset(height: Optional[int], sd_preset: str, hd_preset: str) -> str:
@@ -206,6 +259,7 @@ def convert_file(
     handbrake_cli_path: str,
     preset: str,
     cpu_percent: int = 100,
+    with_subtitles: bool = True,
 ) -> None:
     """Convert a single file with HandBrakeCLI.
 
@@ -217,6 +271,9 @@ def convert_file(
         preset: Exact HandBrake preset name to convert with.
         cpu_percent: Share of the machine's logical processors to allow,
             1..100. 100 (the default) leaves the encode uncapped.
+        with_subtitles: Whether to carry the source's subtitles through.
+            False passes --subtitle none, for sources whose subtitles cannot
+            be muxed into MP4 -- see keep_subtitles.
 
     HandBrake is run at below-normal priority so a multi-hour encode doesn't
     make the machine unusable (see ``_priority_flags``), and pinned to a
@@ -239,17 +296,23 @@ def convert_file(
         str(dest),
         "--preset",
         preset,
+    ]
+
+    if with_subtitles:
         # The presets default to a forced-subtitle search, which finds nothing
         # on a disc carrying only a normal full subtitle track -- so without
         # this every conversion silently discards its subtitles.
-        "--all-subtitles",
+        args.append("--all-subtitles")
         # ...but selecting the track is not enough. The presets also carry a
         # burn-in behaviour, so --all-subtitles on its own renders the
         # subtitles permanently into the picture: HandBrake logs
         # "-> Render/Burn-in" and the output has no subtitle stream at all.
         # With this it logs "-> Passthru" and muxes a selectable track.
-        "--subtitle-burned=none",
-    ]
+        args.append("--subtitle-burned=none")
+    else:
+        # Nothing HandBrake can mux, so asking for subtitles at all would
+        # burn them in. See MP4_MUXABLE_SUBTITLES.
+        args += ["--subtitle", "none"]
 
     try:
         with subprocess.Popen(

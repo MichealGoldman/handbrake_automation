@@ -9,6 +9,12 @@ max-line-length = 88
 
 [tool.pylint.design]
 max-attributes = 8
+# convert_file takes the source, the destination, and the four knobs the
+# encoder actually has: binary path, preset, CPU share, subtitles. Bundling
+# those into a settings object would add indirection without removing any
+# decision, so the limit is raised by one rather than the signature reshaped.
+max-args = 6
+max-positional-arguments = 6
 
 [tool.pylint."messages control"]
 disable = [

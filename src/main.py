@@ -26,7 +26,9 @@ from convert import (
     ConversionError,
     convert_file,
     is_complete_output,
+    keep_subtitles,
     probe_height,
+    probe_subtitle_codecs,
     remove_partial_output,
     select_preset,
 )
@@ -312,6 +314,15 @@ def _process_file(
     if preset != config.handbrake_preset:
         logging.info("Source is %sp, using preset: %s", height, preset)
 
+    codecs = probe_subtitle_codecs(source_path, config.handbrake_cli_path)
+    subtitles = keep_subtitles(codecs)
+    if not subtitles:
+        logging.info(
+            "Subtitles disabled: %s cannot be muxed into MP4 and would be "
+            "burned into the picture",
+            ", ".join(sorted(codecs)),
+        )
+
     started = time.monotonic()
     try:
         with _heartbeat(source_path.name):
@@ -321,6 +332,7 @@ def _process_file(
                 config.handbrake_cli_path,
                 preset,
                 config.cpu_percent,
+                subtitles,
             )
     except ConversionError:
         logging.exception(
