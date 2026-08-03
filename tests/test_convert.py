@@ -78,6 +78,16 @@ def test_all_subtitles_are_carried_through(tmp_path: Path, calls) -> None:
     assert "--all-subtitles" in calls[0]["args"]
 
 
+def test_subtitles_are_not_burned_into_the_picture(tmp_path: Path, calls) -> None:
+    # --all-subtitles alone selects the track but leaves the preset's burn-in
+    # behaviour intact, which renders it permanently into the video. Verified
+    # against HandBrake: without this the log reads "-> Render/Burn-in", with
+    # it "-> Passthru".
+    convert.convert_file(tmp_path / "in.mkv", tmp_path / "out.mp4", "HandBrakeCLI", "P")
+
+    assert "--subtitle-burned=none" in calls[0]["args"]
+
+
 @pytest.mark.parametrize(
     ("height", "expected"),
     [

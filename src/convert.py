@@ -243,6 +243,12 @@ def convert_file(
         # on a disc carrying only a normal full subtitle track -- so without
         # this every conversion silently discards its subtitles.
         "--all-subtitles",
+        # ...but selecting the track is not enough. The presets also carry a
+        # burn-in behaviour, so --all-subtitles on its own renders the
+        # subtitles permanently into the picture: HandBrake logs
+        # "-> Render/Burn-in" and the output has no subtitle stream at all.
+        # With this it logs "-> Passthru" and muxes a selectable track.
+        "--subtitle-burned=none",
     ]
 
     try:
