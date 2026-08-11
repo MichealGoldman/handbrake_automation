@@ -20,6 +20,8 @@ from pathlib import Path
 from statistics import median
 from typing import Optional
 
+from naming import TAG_PREFIXES
+
 # Episodes within one season run to near-uniform length, so a track far
 # smaller than its group's median is a bonus feature, not an episode. Rips
 # routinely carry featurettes, trailers, and menu loops alongside the
@@ -127,6 +129,14 @@ class RipPlan:
 
 
 def _clean_show(raw: str) -> str:
+    # A finished folder carries the same DONE_/REVIEW_/SKIP_ prefix its tracks
+    # do. Left on, it would become part of the title ("Done Casino") the next
+    # time the library is scanned.
+    for prefix in TAG_PREFIXES:
+        if raw.startswith(prefix):
+            raw = raw[len(prefix) :]
+            break
+
     name = _SEPARATORS.sub(" ", raw).strip()
     # Disc rips are routinely ALL CAPS ("BUFFY"); title-case reads better and
     # scores the same under rapidfuzz.

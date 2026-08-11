@@ -182,3 +182,22 @@ def test_folder_without_track_ids_is_ignored(tmp_path: Path) -> None:
     track = _track(tmp_path / "SOME MOVIE", "some.movie.1999.mkv", 100)
 
     assert not build_movie_plan([track], tmp_path)
+
+
+def test_a_tagged_folder_name_still_identifies(tmp_path: Path) -> None:
+    # Folders get a DONE_/REVIEW_ prefix once every track in them is handled.
+    # _clean_show builds the movie title from the folder name, so without a
+    # matching strip a re-scan would identify "DONE_CASINO" as "Done Casino".
+    track = _track(tmp_path / "DONE_CASINO", "B1_t00.mkv", 100)
+
+    plan = build_movie_plan([track], tmp_path)
+
+    assert plan[track].title == "Casino"
+
+
+def test_a_review_tagged_folder_name_still_identifies(tmp_path: Path) -> None:
+    track = _track(tmp_path / "REVIEW_AEONFLUX", "B1_t00.mkv", 100)
+
+    plan = build_movie_plan([track], tmp_path)
+
+    assert plan[track].title == "Aeonflux"

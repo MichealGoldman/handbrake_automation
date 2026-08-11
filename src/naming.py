@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Iterable, Optional
 
 from models import MediaMatch
 
@@ -27,7 +28,40 @@ SHOWS_FOLDER = "Shows"
 DONE_PREFIX = "DONE_"
 REVIEW_PREFIX = "REVIEW_"
 SKIP_PREFIX = "SKIP_"
+TAG_PREFIXES = (DONE_PREFIX, REVIEW_PREFIX, SKIP_PREFIX)
 _ILLEGAL_CHARS = re.compile(r'[<>:"/\\|?*]')
+
+
+def folder_prefix(filenames: Iterable[str]) -> Optional[str]:
+    """Decide the prefix a source folder has earned, if any.
+
+    The same three prefixes are applied to a whole folder once every track
+    inside it has been handled, so SOURCE_DIR can be skimmed a directory at a
+    time rather than file by file.
+
+    Args:
+        filenames: Names of every source file directly in the folder.
+
+    Returns:
+        REVIEW_PREFIX if any track needs review, DONE_PREFIX if any converted
+        cleanly, SKIP_PREFIX if the folder held nothing but extras, or None
+        when the folder is empty or still holds an untagged track.
+    """
+    seen = set()
+    for name in filenames:
+        prefix = next((p for p in TAG_PREFIXES if name.startswith(p)), None)
+        if prefix is None:
+            # Still unprocessed, so the folder as a whole isn't finished.
+            return None
+        seen.add(prefix)
+
+    # Review beats done beats skip: the marker exists to surface what still
+    # needs a human, so the weaker outcome must never mask the stronger.
+    for prefix in (REVIEW_PREFIX, DONE_PREFIX, SKIP_PREFIX):
+        if prefix in seen:
+            return prefix
+
+    return None
 
 
 def _sanitize(text: str) -> str:

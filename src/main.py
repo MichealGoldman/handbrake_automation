@@ -40,7 +40,15 @@ from discfolder import (
 )
 from identify import parse_filename
 from models import MediaMatch
-from naming import DONE_PREFIX, REVIEW_PREFIX, SKIP_PREFIX, build_dest_path
+from naming import (
+    DONE_PREFIX,
+    REVIEW_PREFIX,
+    SKIP_PREFIX,
+    TAG_PREFIXES,
+    build_dest_path,
+    folder_prefix,
+)
+from timefmt import format_duration as _format_duration
 from tvdb import TVDBClient, search_disc_episode, search_episode
 from wakelock import keep_awake
 
@@ -62,17 +70,8 @@ class _RunStats:
     repaired: int = 0
     failed: int = 0
     tagged: int = 0
+    folders_tagged: int = 0
     flagged: list[Path] = field(default_factory=list)
-
-
-def _format_duration(seconds: float) -> str:
-    minutes, secs = divmod(int(seconds), 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{hours}h {minutes:02d}m {secs:02d}s"
-    if minutes:
-        return f"{minutes}m {secs:02d}s"
-    return f"{secs}s"
 
 
 @contextmanager
@@ -106,7 +105,7 @@ def _log_summary(stats: _RunStats, elapsed: float) -> None:
     logging.info(
         "Done in %s. Converted: %d, skipped (already existed): %d, "
         "skipped (disc extras): %d, re-converted (partial output): %d, "
-        "failed: %d, tagged: %d, flagged for review: %d",
+        "failed: %d, tagged: %d, folders tagged: %d, flagged for review: %d",
         _format_duration(elapsed),
         stats.converted,
         stats.skipped_existing,
@@ -114,6 +113,7 @@ def _log_summary(stats: _RunStats, elapsed: float) -> None:
         stats.repaired,
         stats.failed,
         stats.tagged,
+        stats.folders_tagged,
         len(stats.flagged),
     )
     if stats.flagged:
@@ -156,6 +156,46 @@ def _tag_source(path: Path, prefix: str) -> bool:
         return False
 
     return True
+
+
+def _tag_folders(source_dir: Path) -> int:
+    """Prefix every source folder whose tracks have all been handled.
+
+    Runs once after the conversion loop rather than per file: the loop holds
+    absolute paths collected up front, so renaming a folder while it still has
+    tracks queued would break every later path in it.
+
+    Args:
+        source_dir: Scan root. Never renamed itself -- it's the configured
+            SOURCE_DIR, and moving it would break the next run.
+
+    Returns:
+        How many folders were renamed.
+    """
+    folders = {path.parent for path in source_dir.rglob("*.mkv")}
+    tagged = 0
+
+    # Deepest first: renaming a parent invalidates the path of any nested
+    # folder still waiting its turn, which would silently skip the child.
+    for folder in sorted(folders, key=lambda path: len(path.parts), reverse=True):
+        if folder == source_dir or folder.name.startswith(TAG_PREFIXES):
+            continue
+
+        prefix = folder_prefix(track.name for track in folder.glob("*.mkv"))
+        if prefix is None:
+            continue
+
+        try:
+            folder.rename(folder.with_name(prefix + folder.name))
+        except OSError:
+            # Same reasoning as _tag_source: the conversions already
+            # succeeded, so a cosmetic rename must not fail the run.
+            logging.warning("Could not tag source folder: %s", folder, exc_info=True)
+            continue
+
+        tagged += 1
+
+    return tagged
 
 
 def _identify_movie_rip(movie_rip: MovieRip, config: Config) -> MediaMatch:
@@ -402,6 +442,8 @@ def main() -> int:
                 "Processing [%d/%d]: %s", index, len(source_files), source_path
             )
             _process_file(source_path, tvdb_client, config, plan, stats)
+
+    stats.folders_tagged = _tag_folders(config.source_dir)
 
     _log_summary(stats, time.monotonic() - run_started)
 
