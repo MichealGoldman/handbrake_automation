@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-import requests
 from rapidfuzz import fuzz
 
+import webapi
 from discfolder import DiscEpisode
 from models import MediaMatch
 
@@ -24,7 +24,7 @@ class TVDBAuthError(RuntimeError):
 
 
 def _login(api_key: str) -> str:
-    resp = requests.post(f"{BASE_URL}/login", json={"apikey": api_key}, timeout=15)
+    resp = webapi.request("POST", f"{BASE_URL}/login", json={"apikey": api_key})
     resp.raise_for_status()
     token = resp.json().get("data", {}).get("token")
     if not token:
@@ -46,8 +46,8 @@ class TVDBClient:
         return {"Authorization": f"Bearer {self._token}"}
 
     def _get(self, path: str, params: Optional[dict] = None) -> dict:
-        resp = requests.get(
-            f"{BASE_URL}{path}", headers=self._headers(), params=params, timeout=15
+        resp = webapi.request(
+            "GET", f"{BASE_URL}{path}", headers=self._headers(), params=params
         )
         resp.raise_for_status()
         return resp.json()

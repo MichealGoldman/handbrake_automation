@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-import requests
 from rapidfuzz import fuzz
 
+import webapi
 from models import MediaMatch
 
 BASE_URL = "https://api.themoviedb.org/3"
@@ -32,7 +32,7 @@ def search_movie(title: str, year: Optional[int], api_key: str) -> Optional[Medi
     if year:
         params["year"] = year
 
-    resp = requests.get(f"{BASE_URL}/search/movie", params=params, timeout=15)
+    resp = webapi.request("GET", f"{BASE_URL}/search/movie", params=params)
     resp.raise_for_status()
     results = resp.json().get("results", [])
     if not results:
