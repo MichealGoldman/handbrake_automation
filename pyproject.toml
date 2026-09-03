@@ -1,0 +1,35 @@
+[tool.black]
+line-length = 88
+
+[tool.isort]
+profile = "black"
+
+[tool.pylint.format]
+max-line-length = 88
+
+[tool.pylint.design]
+max-attributes = 8
+# convert_file takes the source, the destination, and the four knobs the
+# encoder actually has: binary path, preset, CPU share, subtitles. Bundling
+# those into a settings object would add indirection without removing any
+# decision, so the limit is raised by one rather than the signature reshaped.
+max-args = 6
+max-positional-arguments = 6
+
+[tool.pylint."messages control"]
+disable = [
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "too-few-public-methods",
+]
+
+[tool.mypy]
+check_untyped_defs = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+# src/ is a plain directory, not a package; main.py puts it on sys.path at
+# runtime, and this does the same for the tests.
+pythonpath = ["src"]
