@@ -1,6 +1,9 @@
 # This project
 logs/
 
+# Claude Code: local settings, commands, and anything else under it.
+.claude/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
