@@ -201,3 +201,56 @@ def test_failure_deletes_the_partial_output(
         convert.convert_file(tmp_path / "in.mkv", dest, "HandBrakeCLI", "P")
 
     assert not dest.exists()
+
+
+def test_failure_removes_the_folder_it_created(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # convert_file makes the destination folder before launching HandBrake, so
+    # a failed encode used to leave an empty movie folder behind permanently --
+    # Jellyfin then scans it as a film that plays nothing.
+    dest = tmp_path / "Nightbreed Directors Cut" / "Nightbreed Directors Cut.mp4"
+
+    _patch_popen(monkeypatch, _FakeProcess(returncode=2, stderr="No title found."))
+
+    with pytest.raises(convert.ConversionError):
+        convert.convert_file(tmp_path / "in.mkv", dest, "HandBrakeCLI", "P")
+
+    assert not dest.parent.exists()
+
+
+def test_failure_keeps_a_folder_it_did_not_create(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A second cut failing must not take the existing film's folder with it.
+    folder = tmp_path / "Nightbreed (1990)"
+    folder.mkdir()
+    (folder / "Nightbreed (1990).mp4").write_bytes(b"the good one")
+
+    _patch_popen(monkeypatch, _FakeProcess(returncode=2, stderr="No title found."))
+
+    with pytest.raises(convert.ConversionError):
+        convert.convert_file(
+            tmp_path / "in.mkv",
+            folder / "Nightbreed Directors Cut.mp4",
+            "HandBrakeCLI",
+            "P",
+        )
+
+    assert (folder / "Nightbreed (1990).mp4").read_bytes() == b"the good one"
+
+
+def test_interrupt_removes_the_folder_it_created(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dest = tmp_path / "Some Film (1999)" / "Some Film (1999).mp4"
+
+    def fake_popen(*_args, **_kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(convert.subprocess, "Popen", fake_popen)
+
+    with pytest.raises(KeyboardInterrupt):
+        convert.convert_file(tmp_path / "in.mkv", dest, "HandBrakeCLI", "P")
+
+    assert not dest.parent.exists()

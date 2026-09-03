@@ -6,6 +6,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -53,6 +54,31 @@ def load_cpu_percent() -> int:
     return percent
 
 
+def _resolve_source_dir(override: Optional[Path]) -> Path:
+    # The source folder moves between runs -- it has been C:\video, E:\Video,
+    # and C:\Video -- while .env keeps whatever it was told last. A stale
+    # SOURCE_DIR pointing at an emptied folder is the worst failure available
+    # here: the scan finds nothing, every tally reads zero, and the run exits
+    # 0 as though it had succeeded. So the caller's value always wins, and
+    # .env is only the fallback.
+    if override is not None:
+        source_dir = override
+    else:
+        configured = os.environ.get("SOURCE_DIR", "").strip()
+        if not configured:
+            raise ConfigError(
+                "No source folder given. Pass one on the command line "
+                '(python src/main.py "C:\\Video") or set SOURCE_DIR in .env.'
+            )
+        source_dir = Path(configured)
+
+    if not source_dir.is_dir():
+        raise ConfigError(
+            f"Source folder does not exist or is not a directory: {source_dir}"
+        )
+    return source_dir
+
+
 def _resolve_handbrake_cli(configured_path: str) -> str:
     if configured_path:
         if not Path(configured_path).is_file():
@@ -77,7 +103,8 @@ class Config:
     """Fully resolved application configuration loaded from the environment.
 
     Attributes:
-        source_dir: Root folder to recursively scan for .mkv files.
+        source_dir: Root folder to recursively scan for .mkv files, taken
+            from the command line when given and from SOURCE_DIR otherwise.
         dest_dir: Root of the Plex/Jellyfin-style output tree.
         handbrake_cli_path: Resolved path to the HandBrakeCLI executable.
         handbrake_preset: Preset for standard-definition sources, and the
@@ -101,23 +128,24 @@ class Config:
     cpu_percent: int = 100
 
 
-def load_config() -> Config:
+def load_config(source_override: Optional[Path] = None) -> Config:
     """Load and validate configuration from the environment.
+
+    Args:
+        source_override: Source folder supplied by the caller, normally from
+            the command line. Takes precedence over SOURCE_DIR in .env; when
+            omitted, SOURCE_DIR is used instead.
 
     Returns:
         A fully resolved Config.
 
     Raises:
-        ConfigError: If a required variable is missing, SOURCE_DIR does not
-            exist, or HandBrakeCLI cannot be located.
+        ConfigError: If a required variable is missing, no source folder was
+            given by either route, the source folder does not exist, or
+            HandBrakeCLI cannot be located.
     """
-    source_dir = Path(_require("SOURCE_DIR"))
+    source_dir = _resolve_source_dir(source_override)
     dest_dir = Path(_require("DEST_DIR"))
-
-    if not source_dir.is_dir():
-        raise ConfigError(
-            f"SOURCE_DIR does not exist or is not a directory: {source_dir}"
-        )
 
     handbrake_preset = (
         os.environ.get("HANDBRAKE_PRESET", "").strip() or "Super HQ 1080p30 Surround"

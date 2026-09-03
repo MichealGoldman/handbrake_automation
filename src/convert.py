@@ -231,6 +231,25 @@ def remove_partial_output(dest: Path) -> None:
         pass
 
 
+def _clean_failed_output(dest: Path, created_dir: bool) -> None:
+    # convert_file makes the destination folder before HandBrake runs, so a
+    # failure that leaves no output would otherwise strand an empty movie
+    # folder in the library forever -- Jellyfin scans it as a film that plays
+    # nothing. Only a folder this call created is a candidate, and rmdir
+    # refuses a non-empty one, so an existing film's folder is never at risk
+    # from a second cut failing beside it.
+    remove_partial_output(dest)
+
+    if not created_dir:
+        return
+
+    try:
+        dest.parent.rmdir()
+    except OSError:
+        # Not empty, or not removable. Leaving it is the safe outcome.
+        pass
+
+
 def is_complete_output(source: Path, dest: Path) -> bool:
     """Report whether an existing destination looks like a finished encode.
 
@@ -284,8 +303,10 @@ def convert_file(
             partial output file is deleted before raising -- as it also is if
             the run is interrupted (Ctrl-C), since a truncated .mp4 left at the
             destination would be mistaken for a finished conversion and skipped
-            by the next run.
+            by the next run. A destination folder this call created is removed
+            too, when nothing else landed in it.
     """
+    created_dir = not dest.parent.exists()
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     args = [
@@ -330,12 +351,12 @@ def convert_file(
     except BaseException:
         # Ctrl-C reaches HandBrake too, so it dies mid-write; clean up before
         # letting the interrupt through.
-        remove_partial_output(dest)
+        _clean_failed_output(dest, created_dir)
         raise
 
     if returncode != 0:
-        # Don't leave a partial/corrupt .mp4 behind on failure.
-        remove_partial_output(dest)
+        # Don't leave a partial/corrupt .mp4 -- or an empty folder -- behind.
+        _clean_failed_output(dest, created_dir)
         raise ConversionError(
             f"HandBrakeCLI exited with code {returncode} for {source}:\n"
             f"{(stderr or '')[-4000:]}"

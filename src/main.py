@@ -1,15 +1,17 @@
-"""Recursively finds, identifies, and converts .mkv files to Plex/Jellyfin .mp4s.
+r"""Recursively finds, identifies, and converts .mkv files to Plex/Jellyfin .mp4s.
 
-Scans SOURCE_DIR for .mkv files, identifies each one via TMDb/TVDB, and
+Scans a source folder for .mkv files, identifies each one via TMDb/TVDB, and
 converts it with HandBrakeCLI into DEST_DIR's Plex/Jellyfin-style folder
 structure.
 
 Usage:
-    python src/main.py
+    python src/main.py "C:\\Video"   # scan the folder given
+    python src/main.py               # fall back to SOURCE_DIR in .env
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
 import sys
 import threading
@@ -18,7 +20,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Optional
 
 import tmdb
 from config import Config, ConfigError, load_config
@@ -393,17 +395,42 @@ def _process_file(
         stats.tagged += 1
 
 
-def main() -> int:
+def _parse_args(argv: Optional[list[str]]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Scan a folder for .mkv files, identify each one, and convert it "
+            "into the Plex/Jellyfin-style tree under DEST_DIR."
+        )
+    )
+    parser.add_argument(
+        "source",
+        nargs="?",
+        type=Path,
+        default=None,
+        help=(
+            "Folder to scan recursively for .mkv files. Overrides SOURCE_DIR "
+            "from .env, which is only used when this is omitted."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
     """Run the full scan -> identify -> convert pipeline.
+
+    Args:
+        argv: Command-line arguments, defaulting to the process's own. The
+            first positional argument, if given, is the folder to scan.
 
     Returns:
         0 if every file converted without failure, 2 if any file failed,
         1 if configuration could not be loaded.
     """
+    args = _parse_args(argv)
     log_path = _setup_logging()
 
     try:
-        config = load_config()
+        config = load_config(args.source)
     except ConfigError as e:
         logging.error(str(e))
         return 1

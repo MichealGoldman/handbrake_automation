@@ -50,9 +50,25 @@ AMBIGUOUS_FEATURE_CONFIDENCE = 60.0
 # ("THE_IT_CROWD_SEASON_4") is just a season whose only disc is DEFAULT_DISC.
 # Requiring it meant such folders matched neither this pattern nor anything
 # else, so they fell through to filename parsing and collided on track ids.
+# MakeMKV names a disc folder after the disc label, which brackets the season
+# and disc ("Battlestar Galactica- Season 1 (Disc 2)"). Either segment may
+# therefore be introduced by a bracket instead of a plain separator, and closed
+# by one. Both halves need this: making only the disc bracket-aware left
+# "Show [Season 3] [Disc 4]" matching the disc-only pattern, which silently
+# reported DEFAULT_SEASON instead of the season the folder actually names.
+_SEG_LEAD = r"(?:[ _.\-]*[(\[][ _.\-]*|[ _.\-]+)"
+_SEG_TAIL = r"[ _.\-]*[)\]]?"
+
 _FOLDER_RE = re.compile(
-    r"^(?P<show>.+?)[ _.\-]+s(?:eason)?[ _.\-]*(?P<season>\d{1,2})"
-    r"(?:[ _.\-]+d(?:is[ck])?[ _.\-]*(?P<disc>\d{1,2}))?$",
+    r"^(?P<show>.+?)"
+    + _SEG_LEAD
+    + r"s(?:eason)?[ _.\-]*(?P<season>\d{1,2})"
+    + _SEG_TAIL
+    + r"(?:"
+    + _SEG_LEAD
+    + r"d(?:is[ck])?[ _.\-]*(?P<disc>\d{1,2})"
+    + _SEG_TAIL
+    + r")?$",
     re.IGNORECASE,
 )
 
@@ -60,7 +76,11 @@ _FOLDER_RE = re.compile(
 # spelled-out word is accepted here: with no season to corroborate it, a bare
 # trailing "D2" ends far too many movie folders to read as a disc number.
 _DISC_ONLY_RE = re.compile(
-    r"^(?P<show>.+?)[ _.\-]+dis[ck][ _.\-]*(?P<disc>\d{1,2})$",
+    r"^(?P<show>.+?)"
+    + _SEG_LEAD
+    + r"dis[ck][ _.\-]*(?P<disc>\d{1,2})"
+    + _SEG_TAIL
+    + r"$",
     re.IGNORECASE,
 )
 

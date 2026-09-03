@@ -36,6 +36,10 @@ def _track(folder: Path, name: str, size: int) -> Path:
         ("THE_IT_CROWD_SEASON_4", ("The It Crowd", 4, DEFAULT_DISC)),
         ("THE_IT_CROWD_SEASON_1", ("The It Crowd", 1, DEFAULT_DISC)),
         ("Some Show S2", ("Some Show", 2, DEFAULT_DISC)),
+        # MakeMKV names the folder after the disc label, bracketing the disc.
+        ("Battlestar Galactica- Season 1 (Disc 2)", ("Battlestar Galactica", 1, 2)),
+        ("Battlestar Galactica- Season 2 (Disc 5)", ("Battlestar Galactica", 2, 5)),
+        ("Some Show [Season 3] [Disc 4]", ("Some Show", 3, 4)),
     ],
 )
 def test_parse_disc_folder_matches(folder: str, expected: tuple[str, int, int]) -> None:
@@ -53,6 +57,7 @@ def test_parse_disc_folder_matches(folder: str, expected: tuple[str, int, int]) 
         ("FIREFLY- DISC 3", ("Firefly", DEFAULT_SEASON, 3)),
         ("Some Show Disc 2", ("Some Show", DEFAULT_SEASON, 2)),
         ("SOME_SHOW_DISK_2", ("Some Show", DEFAULT_SEASON, 2)),
+        ("Firefly (Disc 2)", ("Firefly", DEFAULT_SEASON, 2)),
     ],
 )
 def test_parse_disc_folder_defaults_season_when_only_a_disc_is_named(
@@ -68,6 +73,8 @@ def test_parse_disc_folder_defaults_season_when_only_a_disc_is_named(
         # how too many movie folders end for it to mean "disc" on its own.
         "SOME SHOW D2",
         "APOLLO 13 D2",
+        # A bracketed year is not a bracketed disc.
+        "Battlestar Galactica- Mini Series (2003)",
     ],
 )
 def test_parse_disc_folder_needs_the_word_disc_when_no_season_is_named(
