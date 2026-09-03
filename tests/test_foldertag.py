@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from main import _tag_folders
+from main import _count_pending, _tag_finished_folders
 from naming import DONE_PREFIX, REVIEW_PREFIX, SKIP_PREFIX, folder_prefix
 
 
@@ -45,39 +45,71 @@ def _mkv(folder: Path, name: str) -> Path:
     return track
 
 
-def test_a_finished_folder_is_renamed(tmp_path: Path) -> None:
-    _mkv(tmp_path / "CASINO", "DONE_B1_t00.mkv")
+def _run(root: Path, tracks: list[Path]) -> int:
+    """Walk a track list the way main()'s loop does, tagging folders as it goes.
 
-    assert _tag_folders(tmp_path) == 1
+    Each track is assumed already renamed by _tag_source, which is the state
+    _tag_finished_folders sees when the loop calls it.
+    """
+    pending = _count_pending(tracks, root)
+    return sum(_tag_finished_folders(track, root, pending) for track in tracks)
+
+
+def test_a_finished_folder_is_renamed(tmp_path: Path) -> None:
+    track = _mkv(tmp_path / "CASINO", "DONE_B1_t00.mkv")
+
+    assert _run(tmp_path, [track]) == 1
     assert (tmp_path / "DONE_CASINO").is_dir()
 
 
 def test_an_unfinished_folder_is_left_alone(tmp_path: Path) -> None:
-    _mkv(tmp_path / "CASINO", "B1_t00.mkv")
+    # The track never got a tag -- it failed, so the folder isn't finished.
+    track = _mkv(tmp_path / "CASINO", "B1_t00.mkv")
 
-    assert _tag_folders(tmp_path) == 0
+    assert _run(tmp_path, [track]) == 0
     assert (tmp_path / "CASINO").is_dir()
 
 
 def test_an_already_tagged_folder_is_not_tagged_twice(tmp_path: Path) -> None:
-    _mkv(tmp_path / "DONE_CASINO", "DONE_B1_t00.mkv")
+    track = _mkv(tmp_path / "DONE_CASINO", "DONE_B1_t00.mkv")
 
-    assert _tag_folders(tmp_path) == 0
+    assert _run(tmp_path, [track]) == 0
     assert not (tmp_path / "DONE_DONE_CASINO").exists()
 
 
-def test_nested_folders_are_renamed_deepest_first(tmp_path: Path) -> None:
-    # Renaming the parent first would invalidate the child's path, so the
-    # child would be silently missed.
-    _mkv(tmp_path / "BOXSET", "DONE_a_t00.mkv")
-    _mkv(tmp_path / "BOXSET" / "DISC2", "DONE_b_t00.mkv")
+def test_a_folder_is_tagged_as_soon_as_its_last_track_is_done(tmp_path: Path) -> None:
+    # The point of tagging during the run: the folder is marked the moment it
+    # is finished, so an interrupted run keeps the marks it earned.
+    folder = tmp_path / "BUFFY_S3_D1"
+    first = _mkv(folder, "DONE_C1_t00.mkv")
+    second = _mkv(folder, "DONE_C1_t01.mkv")
+    pending = _count_pending([first, second], tmp_path)
 
-    assert _tag_folders(tmp_path) == 2
+    assert _tag_finished_folders(first, tmp_path, pending) == 0
+    assert folder.is_dir(), "renaming with a track still queued breaks its path"
+
+    assert _tag_finished_folders(second, tmp_path, pending) == 1
+    assert (tmp_path / "DONE_BUFFY_S3_D1").is_dir()
+
+
+def test_a_parent_waits_for_its_subfolders(tmp_path: Path) -> None:
+    # The parent holds a finished track of its own, but renaming it now would
+    # invalidate the queued path inside DISC2.
+    boxset = tmp_path / "BOXSET"
+    loose = _mkv(boxset, "DONE_a_t00.mkv")
+    nested = _mkv(boxset / "DISC2", "DONE_b_t00.mkv")
+    pending = _count_pending([loose, nested], tmp_path)
+
+    assert _tag_finished_folders(loose, tmp_path, pending) == 0
+    assert nested.exists()
+
+    # Deepest first, so the child is renamed before the parent moves under it.
+    assert _tag_finished_folders(nested, tmp_path, pending) == 2
     assert (tmp_path / "DONE_BOXSET" / "DONE_DISC2").is_dir()
 
 
 def test_the_scan_root_is_never_renamed(tmp_path: Path) -> None:
-    _mkv(tmp_path, "DONE_loose_t00.mkv")
+    track = _mkv(tmp_path, "DONE_loose_t00.mkv")
 
-    assert _tag_folders(tmp_path) == 0
+    assert _run(tmp_path, [track]) == 0
     assert tmp_path.is_dir()

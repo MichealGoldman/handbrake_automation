@@ -16,11 +16,12 @@ import logging
 import sys
 import threading
 import time
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterable, Iterator, Optional
 
 import tmdb
 from config import Config, ConfigError, load_config
@@ -124,6 +125,21 @@ def _log_summary(stats: _RunStats, elapsed: float) -> None:
             logging.info("  %s", path)
 
 
+def _log_rip_plan(plan: RipPlan) -> None:
+    """Log what the disc-folder pass resolved, when it resolved anything."""
+    if not plan.episodes and not plan.movies:
+        return
+
+    features = sum(1 for rip in plan.movies.values() if rip.is_feature)
+    logging.info(
+        "%d episode track(s) and %d movie feature(s) resolved from folder "
+        "names; %d extra track(s) will be skipped",
+        len(plan.episodes),
+        features,
+        len(plan.movies) - features,
+    )
+
+
 def _setup_logging() -> Path:
     LOG_DIR.mkdir(exist_ok=True)
     log_path = LOG_DIR / f"run_{datetime.now():%Y%m%d_%H%M%S}.log"
@@ -160,42 +176,81 @@ def _tag_source(path: Path, prefix: str) -> bool:
     return True
 
 
-def _tag_folders(source_dir: Path) -> int:
-    """Prefix every source folder whose tracks have all been handled.
+def _tag_folder(folder: Path) -> bool:
+    """Rename one finished source folder with the prefix its tracks earned."""
+    if folder.name.startswith(TAG_PREFIXES):
+        # Already tagged by an earlier run; never re-tag or switch prefix.
+        return False
 
-    Runs once after the conversion loop rather than per file: the loop holds
-    absolute paths collected up front, so renaming a folder while it still has
-    tracks queued would break every later path in it.
+    prefix = folder_prefix(track.name for track in folder.glob("*.mkv"))
+    if prefix is None:
+        return False
+
+    try:
+        folder.rename(folder.with_name(prefix + folder.name))
+    except OSError:
+        # Same reasoning as _tag_source: the conversions already succeeded, so
+        # a cosmetic rename must not fail the run.
+        logging.warning("Could not tag source folder: %s", folder, exc_info=True)
+        return False
+
+    return True
+
+
+def _count_pending(source_files: Iterable[Path], source_dir: Path) -> Counter[Path]:
+    """Count the queued tracks under each folder between them and the scan root.
 
     Args:
-        source_dir: Scan root. Never renamed itself -- it's the configured
-            SOURCE_DIR, and moving it would break the next run.
+        source_files: Every file the run is about to process.
+        source_dir: Scan root. Excluded from the counts -- it is never renamed.
+
+    Returns:
+        A count per folder, of tracks queued anywhere beneath it.
+    """
+    pending: Counter[Path] = Counter()
+
+    for path in source_files:
+        folder = path.parent
+        # Bounded by the scan root on both sides: a path that somehow sits
+        # outside it contributes nothing, so no folder above SOURCE_DIR can
+        # ever reach zero and become a rename candidate.
+        while folder != source_dir and source_dir in folder.parents:
+            pending[folder] += 1
+            folder = folder.parent
+
+    return pending
+
+
+def _tag_finished_folders(path: Path, source_dir: Path, pending: Counter[Path]) -> int:
+    """Tag the folders whose last queued track has just been handled.
+
+    Folders are tagged as the run goes rather than in a pass at the end, so an
+    interrupted run leaves the same marks a completed one would; a power cut
+    mid-run on 2026-09-03 lost every folder tag while the file tags survived.
+
+    The pending count is what makes mid-run renaming safe. The loop holds
+    absolute paths collected up front, so a folder may only be renamed once
+    nothing beneath it is still queued -- renaming it any earlier would break
+    the path of every track still waiting inside it.
+
+    Args:
+        path: The source file just processed.
+        source_dir: Scan root, never renamed itself.
+        pending: Per-folder queued-track counts, decremented in place.
 
     Returns:
         How many folders were renamed.
     """
-    folders = {path.parent for path in source_dir.rglob("*.mkv")}
     tagged = 0
+    folder = path.parent
 
-    # Deepest first: renaming a parent invalidates the path of any nested
-    # folder still waiting its turn, which would silently skip the child.
-    for folder in sorted(folders, key=lambda path: len(path.parts), reverse=True):
-        if folder == source_dir or folder.name.startswith(TAG_PREFIXES):
-            continue
-
-        prefix = folder_prefix(track.name for track in folder.glob("*.mkv"))
-        if prefix is None:
-            continue
-
-        try:
-            folder.rename(folder.with_name(prefix + folder.name))
-        except OSError:
-            # Same reasoning as _tag_source: the conversions already
-            # succeeded, so a cosmetic rename must not fail the run.
-            logging.warning("Could not tag source folder: %s", folder, exc_info=True)
-            continue
-
-        tagged += 1
+    # Deepest first, so a child is renamed before its parent: the reverse
+    # invalidates the child's path and would silently skip it.
+    while folder != source_dir and source_dir in folder.parents:
+        pending[folder] -= 1
+        if pending[folder] == 0 and _tag_folder(folder):
+            tagged += 1
+        folder = folder.parent
 
     return tagged
 
@@ -444,21 +499,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     logging.info("Found %d .mkv file(s)", len(source_files))
 
     plan = build_rip_plan(source_files, config.source_dir)
-    features = sum(1 for rip in plan.movies.values() if rip.is_feature)
-    extras = len(plan.movies) - features
-    if plan.episodes or plan.movies:
-        logging.info(
-            "%d episode track(s) and %d movie feature(s) resolved from folder "
-            "names; %d extra track(s) will be skipped",
-            len(plan.episodes),
-            features,
-            extras,
-        )
+    _log_rip_plan(plan)
 
     tvdb_client = TVDBClient(config.tvdb_api_key)
 
     stats = _RunStats()
     run_started = time.monotonic()
+    pending = _count_pending(source_files, config.source_dir)
 
     with keep_awake() as awake:
         if awake:
@@ -469,8 +516,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                 "Processing [%d/%d]: %s", index, len(source_files), source_path
             )
             _process_file(source_path, tvdb_client, config, plan, stats)
-
-    stats.folders_tagged = _tag_folders(config.source_dir)
+            stats.folders_tagged += _tag_finished_folders(
+                source_path, config.source_dir, pending
+            )
 
     _log_summary(stats, time.monotonic() - run_started)
 
