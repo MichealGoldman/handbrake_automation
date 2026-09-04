@@ -17,6 +17,11 @@ MAX_EPISODE_PAGES = 10
 # trust the season/episode numbering (TVDB has multiple episode orderings),
 # so cap confidence below the review threshold even if the series match was good.
 NO_EPISODE_TITLE_CONFIDENCE_CAP = 60.0
+# How many title matches to weigh against the rip's own shape before settling
+# on a series. A disc folder carries no year or country, so remakes collide:
+# "BEING_HUMAN_S2_D1" scores 100 against the UK original and slightly less
+# against "Being Human (US)", which is the one on the disc.
+MAX_SERIES_CANDIDATES = 5
 
 
 class TVDBAuthError(RuntimeError):
@@ -94,6 +99,41 @@ class TVDBClient:
             return None
         return str(series_id), candidate_title, candidate_year, min(best_score, 100.0)
 
+    def rank_series(
+        self, title: str, year: Optional[int]
+    ) -> list[tuple[str, str, Optional[int], float]]:
+        """Rank every series matching a title, best fuzzy score first.
+
+        Args:
+            title: Series title to search for.
+            year: First-air year, if known; scores an exact year match higher.
+
+        Returns:
+            Up to MAX_SERIES_CANDIDATES (series_id, title, year, confidence)
+            tuples, best first. Empty if TVDB returned nothing.
+        """
+        data = self._get("/search", params={"query": title, "type": "series"}).get(
+            "data", []
+        )
+
+        ranked = []
+        for candidate in data:
+            series_id = candidate.get("tvdb_id") or candidate.get("id")
+            if series_id is None:
+                continue
+            candidate_title = candidate.get("name") or ""
+            score = fuzz.WRatio(title, candidate_title)
+            raw_year = candidate.get("year")
+            candidate_year = int(raw_year) if raw_year else None
+            if year and candidate_year == year:
+                score += YEAR_MATCH_BONUS
+            ranked.append(
+                (str(series_id), candidate_title, candidate_year, min(score, 100.0))
+            )
+
+        ranked.sort(key=lambda item: item[3], reverse=True)
+        return ranked[:MAX_SERIES_CANDIDATES]
+
     def get_season_episodes(self, series_id: str, season: int) -> list[dict]:
         """Collect every episode of one season, ordered by episode number.
 
@@ -169,12 +209,28 @@ def search_disc_episode(
     Returns:
         A MediaMatch for the episode, or None if no series match was found.
     """
-    series_match = client.search_series(disc_episode.show, None)
-    if series_match is None:
+    candidates = client.rank_series(disc_episode.show, None)
+    if not candidates:
         return None
 
-    series_id, matched_title, matched_year, confidence = series_match
-    episodes = client.get_season_episodes(series_id, disc_episode.season)
+    # A disc folder names no year and no country, so a remake scores as well
+    # as the original -- "Being Human" is an exact hit on the 2009 UK series
+    # when the discs are the 2011 US one. The rip's own shape breaks the tie:
+    # prefer the candidate whose season is as long as the numbering implies.
+    # Falling back to the best title match keeps a single-candidate search,
+    # and an unverifiable one, behaving exactly as before.
+    chosen = None
+    for candidate in candidates:
+        season_episodes = client.get_season_episodes(candidate[0], disc_episode.season)
+        if len(season_episodes) == disc_episode.implied_season_length:
+            chosen = (candidate, season_episodes)
+            break
+
+    if chosen is None:
+        best = candidates[0]
+        chosen = (best, client.get_season_episodes(best[0], disc_episode.season))
+
+    (_series_id, matched_title, matched_year, confidence), episodes = chosen
 
     counts_agree = (
         bool(episodes) and len(episodes) == disc_episode.implied_season_length
