@@ -95,7 +95,7 @@ def test_discs_of_a_season_less_show_share_one_episode_run(tmp_path: Path) -> No
     assert [plan[path].episode for path in (first, second, third)] == [1, 2, 3]
     assert {plan[path].show for path in (first, second, third)} == {"Firefly"}
     assert {plan[path].season for path in (first, second, third)} == {DEFAULT_SEASON}
-    assert plan[first].group_size == 3
+    assert plan[first].implied_season_length == 3
 
 
 def test_season_less_disc_folder_is_not_claimed_as_a_movie(tmp_path: Path) -> None:

@@ -176,11 +176,18 @@ def search_disc_episode(
     series_id, matched_title, matched_year, confidence = series_match
     episodes = client.get_season_episodes(series_id, disc_episode.season)
 
-    counts_agree = bool(episodes) and len(episodes) == disc_episode.group_size
+    counts_agree = (
+        bool(episodes) and len(episodes) == disc_episode.implied_season_length
+    )
     episode_title = None
 
     if counts_agree:
-        episode_title = episodes[disc_episode.episode - 1].get("name")
+        # Look the number up rather than indexing: disc-anchored numbering
+        # skips the episodes whose tracks were never ripped.
+        match = next(
+            (e for e in episodes if e.get("number") == disc_episode.episode), None
+        )
+        episode_title = match.get("name") if match else None
     else:
         # Track count and episode count disagree -- the positional mapping is
         # unreliable, so flag rather than assert a title.

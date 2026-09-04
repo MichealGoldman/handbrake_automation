@@ -102,13 +102,15 @@ class DiscEpisode:
     Attributes:
         show: Show title recovered from the folder name.
         season: Season number recovered from the folder name.
-        episode: Positional episode number, numbered from 1 across all discs
-            of the same show and season.
+        episode: Episode number, derived from the disc number and the
+            track's position within that disc.
         disc: Disc number the track came from.
         track: Track number within the disc.
-        group_size: Total tracks found for this show and season, across every
-            disc. Compared against the season's real episode count to decide
-            whether the positional numbering can be trusted.
+        implied_season_length: Highest episode number this group's
+            disc-anchored numbering produced -- the season length the rip
+            implies. Comparing it against the season's real episode count is
+            what validates the mapping: equal means every disc lined up, and
+            unripped tracks in the middle don't disturb it.
     """
 
     show: str
@@ -116,7 +118,7 @@ class DiscEpisode:
     episode: int
     disc: int
     track: int
-    group_size: int
+    implied_season_length: int
 
 
 @dataclass(frozen=True)
@@ -268,16 +270,39 @@ def build_disc_plan(paths: list[Path]) -> dict[Path, DiscEpisode]:
     for (show, season), entries in groups.items():
         entries = _drop_extras(entries)
         entries.sort(key=lambda item: (item[0], item[1], item[2].name))
-        group_size = len(entries)
 
-        for index, (disc, track, path) in enumerate(entries, start=1):
+        # Anchor every episode to its disc rather than counting 1..N across
+        # the group. Track ids are per-disc and sequential, so a gap in them
+        # is a track that was never ripped, and the disc number gives an
+        # absolute offset. Counting across the group instead meant a single
+        # unripped track shifted every episode after it, and a whole missing
+        # disc shifted the entire season -- The Walking Dead season 3, ripped
+        # without disc 1, numbered its disc 2 as episodes 1-4.
+        tracks_by_disc: dict[int, list[int]] = {}
+        for disc, track, _ in entries:
+            tracks_by_disc.setdefault(disc, []).append(track)
+
+        # A disc's span, not its count: the gaps are exactly the tracks that
+        # are missing, so they still occupy their episode's place.
+        per_disc = max(
+            max(tracks) - min(tracks) + 1 for tracks in tracks_by_disc.values()
+        )
+        first_track = {disc: min(tracks) for disc, tracks in tracks_by_disc.items()}
+
+        numbers = {
+            path: (disc - 1) * per_disc + (track - first_track[disc]) + 1
+            for disc, track, path in entries
+        }
+        implied_season_length = max(numbers.values())
+
+        for disc, track, path in entries:
             plan[path] = DiscEpisode(
                 show=show,
                 season=season,
-                episode=index,
+                episode=numbers[path],
                 disc=disc,
                 track=track,
-                group_size=group_size,
+                implied_season_length=implied_season_length,
             )
 
     return plan
