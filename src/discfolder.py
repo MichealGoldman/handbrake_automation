@@ -59,6 +59,10 @@ AMBIGUOUS_FEATURE_CONFIDENCE = 60.0
 _SEG_LEAD = r"(?:[ _.\-]*[(\[][ _.\-]*|[ _.\-]+)"
 _SEG_TAIL = r"[ _.\-]*[)\]]?"
 
+# "DVD" is accepted alongside "DISC"/"DISK" and bare "D" here because the
+# season is stated explicitly ("BEING_HUMAN_SEASON1_DVD2"); without it the
+# folder matched nothing, fell through to the movie-rip path, and every track
+# but the largest was dropped as an extra.
 _FOLDER_RE = re.compile(
     r"^(?P<show>.+?)"
     + _SEG_LEAD
@@ -66,19 +70,20 @@ _FOLDER_RE = re.compile(
     + _SEG_TAIL
     + r"(?:"
     + _SEG_LEAD
-    + r"d(?:is[ck])?[ _.\-]*(?P<disc>\d{1,2})"
+    + r"d(?:is[ck]|vd)?[ _.\-]*(?P<disc>\d{1,2})"
     + _SEG_TAIL
     + r")?$",
     re.IGNORECASE,
 )
 
-# "FIREFLY- DISC 1" -> show/disc, with the season left implicit. Only the
-# spelled-out word is accepted here: with no season to corroborate it, a bare
-# trailing "D2" ends far too many movie folders to read as a disc number.
+# "FIREFLY- DISC 1" -> show/disc, with the season left implicit. Only a
+# spelled-out word is accepted here -- "DISC", "DISK" or "DVD": with no season
+# to corroborate it, a bare trailing "D2" ends far too many movie folders to
+# read as a disc number.
 _DISC_ONLY_RE = re.compile(
     r"^(?P<show>.+?)"
     + _SEG_LEAD
-    + r"dis[ck][ _.\-]*(?P<disc>\d{1,2})"
+    + r"(?:dis[ck]|dvd)[ _.\-]*(?P<disc>\d{1,2})"
     + _SEG_TAIL
     + r"$",
     re.IGNORECASE,
